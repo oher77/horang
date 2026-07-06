@@ -1,0 +1,10 @@
+stable_id,decision,value,note
+188,phrase,,핵심어 business 미존재 → phrase headword 채택 (2026-07-07 검수 승인)
+408,headword,couple,"한국어 뜻만(커플, 한쌍) → couple 확정"
+584,headword,donut,한국어 뜻만(도너츠) → donut 확정
+810,phrase,,핵심어 foot/feet 미존재 → phrase headword 채택
+843,headword,fruit,한국어 뜻만(과일) → fruit 확정
+1232,phrase,,핵심어 marry 미존재 → phrase headword 채택
+1321,phrase,,핵심어 move 미존재 → phrase headword 채택
+1457,phrase,,핵심어 pass 미존재 → phrase headword 채택
+2353,absorb,point,point(기존 word 존재)의 예문/구 표현으로 흡수 — 독립 단어 항목 제거

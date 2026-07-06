@@ -1,30 +1,12 @@
 raw,guessed_word,prev_head,next_head,kind,note
-두배의: d______,"d______ (prev=dose, next=doubt 사이 알파벳 추정)",dose,doubt,spelling,"스펠링힌트 - 힌트=d______, 알파벳위치 prev='dose' next='doubt'"
 eat의 과거형,eat,east,economy,inflection,"문법변형 메모, 원형=eat (목표단어 자동확정: 메모에 원형 명시). 정답(변형형 문자열)은 gen_content 단계에서 채움"
-매주 수요일,,ever,evidence,spelling,한글뜻만 - 알파벳위치 prev='ever' next='evidence' 사이에서 검수자 확정 필요
 fall의 동사변형,fall,faith,False,inflection,"문법변형 메모, 원형=fall (목표단어 자동확정: 메모에 원형 명시). 정답(변형형 문자열)은 gen_content 단계에서 채움"
 feel의 동사변형,feel,feed,fellow,inflection,"문법변형 메모, 원형=feel (목표단어 자동확정: 메모에 원형 명시). 정답(변형형 문자열)은 gen_content 단계에서 채움"
-축제: f_______,"f_______ (prev=fertile, next=fever 사이 알파벳 추정)",fertile,fever,spelling,"스펠링힌트 - 힌트=f_______, 알파벳위치 prev='fertile' next='fever'"
 fly의 진행형,fly,flush,focus,inflection,"문법변형 메모, 원형=fly (목표단어 자동확정: 메모에 원형 명시). 정답(변형형 문자열)은 gen_content 단계에서 채움"
 forget의 동사변형,forget,forever,forgive,inflection,"문법변형 메모, 원형=forget (목표단어 자동확정: 메모에 원형 명시). 정답(변형형 문자열)은 gen_content 단계에서 채움"
 get의 동사변형,get,gesture,ghost,inflection,"문법변형 메모, 원형=get (목표단어 자동확정: 메모에 원형 명시). 정답(변형형 문자열)은 gen_content 단계에서 채움"
 give의 동사변형,give,giraffe,glad,inflection,"문법변형 메모, 원형=give (목표단어 자동확정: 메모에 원형 명시). 정답(변형형 문자열)은 gen_content 단계에서 채움"
-"털, 머리카락",,habitat,half,spelling,한글뜻만 - 알파벳위치 prev='habitat' next='half' 사이에서 검수자 확정 필요
-햄버거,,halt,hammer,spelling,한글뜻만 - 알파벳위치 prev='halt' next='hammer' 사이에서 검수자 확정 필요
 hear 동사변형,hear,health,heat,inflection,"문법변형 메모, 원형=hear (목표단어 자동확정: 메모에 원형 명시). 정답(변형형 문자열)은 gen_content 단계에서 채움"
-무거운,,heaven,heel,spelling,한글뜻만 - 알파벳위치 prev='heaven' next='heel' 사이에서 검수자 확정 필요
 hit의 동사변형,hit,hire,hobby,inflection,"문법변형 메모, 원형=hit (목표단어 자동확정: 메모에 원형 명시). 정답(변형형 문자열)은 gen_content 단계에서 채움"
-병원,,horror,host,spelling,한글뜻만 - 알파벳위치 prev='horror' next='host' 사이에서 검수자 확정 필요
-일주일에 3시간,,hostile,household,spelling,한글뜻만 - 알파벳위치 prev='hostile' next='household' 사이에서 검수자 확정 필요
-주스,,judge,junior,spelling,한글뜻만 - 알파벳위치 prev='judge' next='junior' 사이에서 검수자 확정 필요
-"주방, 키친",,kit,knee,spelling,한글뜻만 - 알파벳위치 prev='kit' next='knee' 사이에서 검수자 확정 필요
-운,,loyal,lump,spelling,한글뜻만 - 알파벳위치 prev='loyal' next='lump' 사이에서 검수자 확정 필요
-기계,,luxury,mad,spelling,한글뜻만 - 알파벳위치 prev='luxury' next='mad' 사이에서 검수자 확정 필요
 man의 복수형,man,male,manage,inflection,"문법변형 메모, 원형=man (목표단어 자동확정: 메모에 원형 명시). 정답(변형형 문자열)은 gen_content 단계에서 채움"
 meet의 동사변형,meet,medium,melon,inflection,"문법변형 메모, 원형=meet (목표단어 자동확정: 메모에 원형 명시). 정답(변형형 문자열)은 gen_content 단계에서 채움"
-영화 m_____,,I'm moved,mud,spelling,"한글뜻만 - 알파벳위치 prev=""I'm moved"" next='mud' 사이에서 검수자 확정 필요"
-문장에서 often의 위치는?,often,officer,okay,usage,"서술형/용법 메모, 대상어 추정=often"
-one 의 쓰임에 대해 (숫자말고),one,once,opera,usage,"서술형/용법 메모, 대상어 추정=one"
-가위,,scholar,scope,spelling,한글뜻만 - 알파벳위치 prev='scholar' next='scope' 사이에서 검수자 확정 필요
-"비밀, 비밀의",,second,secretary,spelling,한글뜻만 - 알파벳위치 prev='second' next='secretary' 사이에서 검수자 확정 필요
-"신뢰, 믿음",,troop,tube,spelling,한글뜻만 - 알파벳위치 prev='troop' next='tube' 사이에서 검수자 확정 필요

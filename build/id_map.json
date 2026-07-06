@@ -2416,9 +2416,17 @@
     "interviewee": 2414,
     "interviewer": 2415,
     "vigorous": 2416,
-    "virtual": 2417
+    "virtual": 2417,
+    "couple": 408,
+    "donut": 584,
+    "fruit": 843
   },
   "max_id_ever_issued": 2417,
-  "active_word_count": 2417,
-  "retired_headwords": []
+  "active_word_count": 2416,
+  "retired_headwords": [
+    "What's the point?",
+    "과일",
+    "도너츠",
+    "커플, 한쌍"
+  ]
 }

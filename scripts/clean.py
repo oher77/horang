@@ -9,13 +9,25 @@ clean.py — 호랑이 잉글리시 원본 정제 스크립트
 입력:  data/voca_data.xlsx (Sheet1, 컬럼: [번호, 표제어, 파생어, 쓰기])
 출력:
   build/words.json           - 정제된 word / lemma_group / writing_item (stable_id 부여됨)
+  build/words.final.json     - word 레벨 검수(review/word_review.csv)가 모두 해소된 경우에만 추가 출력
   build/id_map.json          - headword -> stable_id 영속 매핑 (재실행 멱등성의 핵심)
-  review/writing_manual.csv  - 쓰기 컬럼 수동보정 큐
-  review/word_review.csv     - needs_review=1 word 목록 (한글뜻 오염 표제어 등)
+  review/writing_manual.csv  - 쓰기 컬럼 수동보정 큐 (미해소 항목만)
+  review/word_review.csv     - needs_review=1 word 목록 (한글뜻 오염 표제어 등, 미해소 항목만)
 
 재실행 시 idempotent: 같은 headword는 항상 같은 stable_id를 받는다. 신규 headword만
 기존 max_id + 1부터 순차 배정된다. 삭제된(더 이상 원본에 없는) headword의 id는
 id_map에 남겨두되(결번 처리, 재사용 금지) words.json에는 포함하지 않는다.
+
+검수 반영(선택, 하위호환):
+  review/word_review_resolved.csv     - 컬럼 stable_id,decision,value,note
+    decision=phrase   : needs_review=0으로 확정(phrase headword 채택, pos_hint 등은 기존 그대로)
+    decision=headword : headword 텍스트를 value로 교체. stable_id(=id_map의 id)는 유지
+    decision=absorb    : 해당 word를 제거하고, value로 지정된 기존 word에
+                          absorbed_phrases 메타데이터로 원문을 보존
+  review/writing_manual_resolved.csv  - 컬럼 raw,resolved_word,note
+    raw로 writing_item을 매칭해 answer=resolved_word, needs_review=0.
+    resolved_word가 기존 headword와 대소문자무시 일치하면 word_id 연결(없으면 NULL 유지 - 신규 word 생성 안 함)
+  두 파일 모두 없으면 기존과 동일하게 동작한다(하위호환).
 """
 
 import json
@@ -36,9 +48,12 @@ INPUT_XLSX = ROOT / "data" / "voca_data.xlsx"
 BUILD_DIR = ROOT / "build"
 REVIEW_DIR = ROOT / "review"
 WORDS_JSON = BUILD_DIR / "words.json"
+WORDS_FINAL_JSON = BUILD_DIR / "words.final.json"
 ID_MAP_JSON = BUILD_DIR / "id_map.json"
 WRITING_MANUAL_CSV = REVIEW_DIR / "writing_manual.csv"
 WORD_REVIEW_CSV = REVIEW_DIR / "word_review.csv"
+WORD_REVIEW_RESOLVED_CSV = REVIEW_DIR / "word_review_resolved.csv"
+WRITING_MANUAL_RESOLVED_CSV = REVIEW_DIR / "writing_manual_resolved.csv"
 
 # ---------------------------------------------------------------------------
 # §2.3 정규식 (설계.md 본문 그대로)
@@ -72,6 +87,45 @@ SENTENCE_EXCLAMATION_TEXTS = {
     "I'm moved",
     "on your feet",
 }
+
+# writing_manual_resolved.csv에 행이 없는 usage 항목(§2.5 형식 e) 중, 대상어가 word 목록에
+# 없어 word_id는 NULL로 남지만 사람 검수로 "드롭하지 않고 needs_review만 0으로 확정"하기로
+# 결정된 건(2026-07-07 검수 승인). raw 문자열 리터럴 매칭 - 위치/행 인덱스 매칭은 원본 행이
+# 추가/삭제되면 깨지므로 이 파일 전체의 관례(DROP_HEAD_TEXTS 등)를 그대로 따른다.
+WRITING_USAGE_FORCE_RESOLVED_TEXTS = {
+    "문장에서 often의 위치는?",
+    "one 의 쓰임에 대해 (숫자말고)",
+}
+
+
+def load_word_review_resolutions(path: Path):
+    """review/word_review_resolved.csv -> {stable_id: {decision, value, note}}. 없으면 빈 dict(하위호환)."""
+    resolutions = {}
+    if not path.exists():
+        return resolutions
+    with open(path, 'r', encoding='utf-8', newline='') as f:
+        for row in csv.DictReader(f):
+            sid = int(row['stable_id'])
+            resolutions[sid] = {
+                'decision': (row.get('decision') or '').strip(),
+                'value': (row.get('value') or '').strip(),
+                'note': row.get('note') or '',
+            }
+    return resolutions
+
+
+def load_writing_manual_resolutions(path: Path):
+    """review/writing_manual_resolved.csv -> {raw: {resolved_word, note}}. 없으면 빈 dict(하위호환)."""
+    resolutions = {}
+    if not path.exists():
+        return resolutions
+    with open(path, 'r', encoding='utf-8', newline='') as f:
+        for row in csv.DictReader(f):
+            resolutions[row['raw']] = {
+                'resolved_word': (row.get('resolved_word') or '').strip(),
+                'note': row.get('note') or '',
+            }
+    return resolutions
 
 # ---------------------------------------------------------------------------
 # 전역 정규화 (§2.1)
@@ -456,6 +510,10 @@ def main():
 
     id_map = IdMap(ID_MAP_JSON)
 
+    # 사람 검수 반영 파일(선택, 하위호환) - 파일 없으면 둘 다 빈 dict
+    word_resolutions = load_word_review_resolutions(WORD_REVIEW_RESOLVED_CSV)
+    writing_resolutions = load_writing_manual_resolutions(WRITING_MANUAL_RESOLVED_CSV)
+
     words = OrderedDict()      # headword -> word dict (최종)
     lemma_groups = OrderedDict()  # group_label -> group id (임시, 최종 id는 뒤에서 부여)
     word_review_rows = []      # word_review.csv용
@@ -543,6 +601,95 @@ def main():
     for hw in words:
         words[hw]['id'] = id_map.get_or_create(hw)
 
+    # ---- 4.5) 사람 검수 결과 반영 (review/word_review_resolved.csv, 선택) ----
+    # word_resolutions가 비어있으면(파일 없음) 아래는 전부 스킵 - 기존과 동일 동작.
+    #
+    # id 매칭 근거: 원본 xlsx는 수정하지 않으므로(가드레일), 헤드워드 처리(1)는 매 실행마다
+    # 항상 같은 원본 텍스트("커플, 한쌍" 등)를 만들어낸다. 그 텍스트에 대해 id_map이 이미
+    # 발급해둔 stable_id를 get_or_create가 그대로 반환하므로(§3.4 불변 계약), 이번 실행에서
+    # 방금 조립한 id_to_hw 역매핑으로 stable_id -> 현재 words dict의 키를 안정적으로 찾을 수
+    # 있다(위치/행 인덱스가 아니라 이미 배정된 id 자체를 근거로 삼음 - 재실행 안전).
+    if word_resolutions:
+        id_to_hw = {entry['id']: hw for hw, entry in words.items()}
+        for sid, res in word_resolutions.items():
+            hw_old = id_to_hw.get(sid)
+            if hw_old is None:
+                # 과거 실행에서 이미 처리돼 words dict에 더는 없는 stable_id(예: 이전에 absorb된 항목) - 스킵
+                continue
+            decision = res['decision']
+            value = res['value']
+
+            if decision == 'phrase':
+                # phrase headword로 채택 확정: needs_review만 해제. pos_hint('phrase')는
+                # classify_headword가 이미 동일 관례로 채워뒀으므로 그대로 둔다.
+                entry = words[hw_old]
+                entry['needs_review'] = 0
+                entry.pop('_review_reasons', None)
+
+            elif decision == 'headword':
+                # headword 텍스트 교체. stable_id는 유지(엔트리를 in-place로 옮길 뿐 id 불변).
+                entry = words.pop(hw_old)
+                new_hw = normalize_text(value)
+                old_label = entry.get('lemma_group_label') or hw_old
+                entry['headword'] = new_hw
+                entry['lemma_group_label'] = new_hw
+                entry['needs_review'] = 0
+                entry.pop('_review_reasons', None)
+                words[new_hw] = entry
+
+                # id_map에 새 headword 키도 같은 stable_id를 가리키도록 추가 등록.
+                # 기존 키(원본 오염 텍스트)는 §3.4 "이미 발급된 매핑은 삭제/재배정 금지" 원칙에
+                # 따라 그대로 둔다 - 다음 실행에서도 원본 텍스트로 같은 id를 재확인할 수 있어야 한다.
+                if new_hw not in id_map.map:
+                    id_map.map[new_hw] = sid
+
+                # 같은 행에 파생어가 있었다면(이번 3건은 없음, 방어적 처리) 그룹 라벨 참조도 갱신
+                src_row = entry['source_row']
+                if row_to_head_resolved.get(src_row) == hw_old:
+                    row_to_head_resolved[src_row] = new_hw
+
+                # lemma_group 라벨 전이 (단독 그룹인 경우 head_lemma도 새 headword로 갱신)
+                if old_label in lemma_group_id_of_label and old_label != new_hw:
+                    gid = lemma_group_id_of_label.pop(old_label)
+                    lemma_group_id_of_label[new_hw] = gid
+                    for rec_g in lemma_group_records:
+                        if rec_g['id'] == gid:
+                            rec_g['head_lemma'] = new_hw
+                            break
+
+            elif decision == 'absorb':
+                # 독립 word 항목에서 제거하고, value로 지정된 기존 word에 원문을 보존.
+                # stable_id는 id_map에 이미 등록돼 있으므로(과거 실행분) 삭제 없이 그대로 두면
+                # IdMap.save()의 retired_headwords 메커니즘이 자동으로 "결번 처리(재사용 금지)"를
+                # 보장한다 - 이 항목만을 위한 별도 코드가 필요 없다.
+                entry = words.pop(hw_old, None)
+                if entry is None:
+                    continue
+                target_hw = next((cand for cand in words if cand.lower() == value.lower()), None)
+                if target_hw is None:
+                    print(
+                        f"WARNING: word_review_resolved.csv stable_id={sid} absorb 대상 "
+                        f"word({value!r})를 찾을 수 없음 - absorbed_phrases 미기록",
+                        file=sys.stderr,
+                    )
+                else:
+                    words[target_hw].setdefault('absorbed_phrases', []).append(hw_old)
+
+            else:
+                print(
+                    f"WARNING: word_review_resolved.csv stable_id={sid} 알 수 없는 "
+                    f"decision={decision!r} - 무시",
+                    file=sys.stderr,
+                )
+
+        # absorb 등으로 구성원이 0이 된 lemma_group은 출력에서 제거(일관성 유지)
+        referenced_gids = {
+            lemma_group_id_of_label[entry.get('lemma_group_label') or hw]
+            for hw, entry in words.items()
+            if (entry.get('lemma_group_label') or hw) in lemma_group_id_of_label
+        }
+        lemma_group_records = [g for g in lemma_group_records if g['id'] in referenced_gids]
+
     # 최종 word 레코드 조립 (dict -> list, id 순 정렬)
     word_records = []
     for hw, entry in words.items():
@@ -557,6 +704,8 @@ def main():
             'pos_hint': entry.get('pos_hint'),
             'needs_review': entry.get('needs_review', 0),
         }
+        if entry.get('absorbed_phrases'):
+            rec['absorbed_phrases'] = entry['absorbed_phrases']
         word_records.append(rec)
         if rec['needs_review']:
             word_review_rows.append({
@@ -576,6 +725,7 @@ def main():
 
     # headword -> stable_id 조회용
     headword_to_id = {hw: words[hw]['id'] for hw in words}
+    headword_to_id_ci = {hw.lower(): wid for hw, wid in headword_to_id.items()}
 
     for row_idx, raw_write in write_series.items():
         if pd.isna(raw_write):
@@ -597,6 +747,19 @@ def main():
             needs_review = 1 if (target_word_entry and target_word_entry.get('needs_review')) else 0
         else:
             needs_review = 1
+
+        # review/writing_manual_resolved.csv 반영 (raw 문자열 매칭, 선택/하위호환)
+        wres = writing_resolutions.get(parsed['raw'])
+        if wres:
+            resolved_word = wres['resolved_word']
+            parsed['answer'] = resolved_word
+            needs_review = 0
+            # 기존 word headword와 대소문자 무시 일치하면 연결, 아니면 NULL 유지(신규 word 생성 안 함)
+            word_id = headword_to_id_ci.get(resolved_word.lower())
+        elif parsed['raw'] in WRITING_USAGE_FORCE_RESOLVED_TEXTS:
+            # usage 항목(대상어가 word 목록에 없음) - 드롭하지 않고 needs_review만 확정.
+            # word_id는 대상어가 없으므로 NULL 유지, answer도 NULL 유지(참고 프롬프트만, §2.5 형식e).
+            needs_review = 0
 
         manual_queue = needs_review == 1
 
@@ -651,6 +814,17 @@ def main():
     with open(WORDS_JSON, 'w', encoding='utf-8') as f:
         json.dump(words_payload, f, ensure_ascii=False, indent=2)
 
+    # §3.1 2단계 산출물: word 레벨 검수(review/word_review_resolved.csv)가 적용되어
+    # needs_review=1 word가 하나도 남지 않으면 words.final.json도 함께 출력한다.
+    # (주의: writing_item 레벨은 별개 축 - 대상어 자체가 word 목록에 없는 inflection
+    # 11건은 이 조건과 무관하게 needs_review=1로 남을 수 있다. 완료 보고 참고.)
+    word_review_fully_resolved = bool(word_resolutions) and all(
+        r['needs_review'] == 0 for r in word_records
+    )
+    if word_review_fully_resolved:
+        with open(WORDS_FINAL_JSON, 'w', encoding='utf-8') as f:
+            json.dump(words_payload, f, ensure_ascii=False, indent=2)
+
     id_map.save(active_headwords=list(words.keys()))
 
     with open(WORD_REVIEW_CSV, 'w', encoding='utf-8', newline='') as f:
@@ -691,12 +865,24 @@ def main():
         print(f"  kind={k}: {v}")
     print(f"  needs_review=1: {sum(1 for it in writing_items if it['needs_review'])}")
     print(f"  word_id 미확정(NULL): {sum(1 for it in writing_items if it['word_id'] is None)}")
+    print(f"  answer 채워짐: {sum(1 for it in writing_items if it['answer'])}")
     print()
     print(f"writing_manual.csv 행 수(수동보정 큐): {len(writing_manual_rows)}")
     print(f"word_review.csv 행 수: {len(word_review_rows)}")
     print()
+    if word_resolutions:
+        print(f"word_review_resolved.csv 적용: {len(word_resolutions)}건")
+    else:
+        print("word_review_resolved.csv 없음(스킵)")
+    if writing_resolutions:
+        print(f"writing_manual_resolved.csv 적용: {len(writing_resolutions)}건")
+    else:
+        print("writing_manual_resolved.csv 없음(스킵)")
+    print()
     print(f"산출물:")
     print(f"  {WORDS_JSON}")
+    if word_review_fully_resolved:
+        print(f"  {WORDS_FINAL_JSON}  (word 레벨 검수 전량 해소)")
     print(f"  {ID_MAP_JSON}")
     print(f"  {WRITING_MANUAL_CSV}")
     print(f"  {WORD_REVIEW_CSV}")
