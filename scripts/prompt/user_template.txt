@@ -1,0 +1,4 @@
+headword="{headword}"
+pos_hint="{pos_hint}"
+
+위 영단어의 뜻(품사별)과 예문(품사별 × level 1·2·3)을 스키마에 맞는 JSON으로 생성하라.

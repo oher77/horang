@@ -1,0 +1,7 @@
+headword="{headword}"
+kind="{kind}"
+prompt_ko="{prompt_ko}"
+raw="{raw}"
+hint="{hint}"
+
+위 쓰기 문제의 정답을 스키마에 맞는 JSON으로 결정하라.

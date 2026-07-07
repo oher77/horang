@@ -11,9 +11,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 작업 배분
 
-- **deep-reasoner** (Opus): 아키텍처 설계, 복잡한 디버깅, 알고리즘 판단 등 무거운 추론
-- **default-worker** (Sonnet): 기능 구현, 보일러플레이트, 테스트, 리팩터링 등 일반 코드 작업
-- **task-worker** (Haiku): 오타 수정, 파일 정리, 단순 반복 작업 등 가벼운 잡무
+- **deep-reasoner** (Opus, effort xhigh): 아키텍처 설계, 복잡한 디버깅, 알고리즘 판단 등 무거운 추론
+- **default-worker** (Sonnet, effort high, project 메모리 축적): 기능 구현, 보일러플레이트, 테스트, 리팩터링 등 일반 코드 작업
+- **task-worker** (Haiku, effort 미지원 모델): 오타 수정, 파일 정리, 단순 반복 작업 등 가벼운 잡무
+
+effort는 `.claude/agents/*.md` frontmatter에서 에이전트별로 고정돼 있고, 스폰 시 프롬프트로 바꿀 수 없다 (조정하려면 frontmatter 수정). 대량 보일러플레이트처럼 사고 깊이가 불필요한 작업을 default-worker에 시킬 때 비용을 더 줄이려면 frontmatter의 effort를 일시적으로 medium으로 낮출 수 있다.
 
 ## 원칙
 
@@ -23,6 +25,33 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 중요한 판단은 `codex exec`(설치돼 있는 경우)와 deep-reasoner에 병렬로 독립 검토시키고, 서로의 답을 보여주지 않은 채 두 답을 받아 종합한다.
 - 예외: 한 줄 수정처럼 위임 오버헤드가 작업 자체보다 큰 경우는 직접 처리해도 된다.
 - 앱 품질이 비용 절감보다 우선한다. 품질/신뢰성 확보에 필요한 지출(예: Apple 개발자 계정 $99/년)은 미루지 말고 필요 시점에 바로 제안할 것.
+
+## 워커 프롬프트 표준 계약 (스폰 시 7요소 필수)
+
+싼 모델의 품질 하한은 프롬프트 구조가 결정한다. **공통 규약(스택 고정, Expo Go 가드레일, 검증 명령, 보고 형식)은 `horang-worker-guide` 스킬이 default-worker에 자동 주입되므로 스폰 프롬프트에 중복 기재하지 말 것** — 프롬프트에는 작업 고유 사항(2·3·4번 + 작업별 특이 가드레일)만 쓴다. 워커 스폰 프롬프트에 반드시 포함:
+
+1. 첫 줄: "직접 수행하라. Agent 도구로 재위임 절대 금지."
+2. 필독 문서를 **섹션 번호까지** 지정 (예: "설계.md §1.3, §4.5"). 문서 전체를 읽게 하지 말 것.
+3. 산출물 명세: 파일 경로·인터페이스(플레이스홀더, 스키마, 시그니처)를 계약으로 고정.
+4. 파일 소유권 경계: 수정 가능/금지 목록 명시 (병렬 워커 충돌 방지의 핵심).
+5. 검증 명령 목록: 실행할 명령을 그대로 적시 (예: `npx tsc --noEmit`, `npx expo export`).
+6. 완료 보고 형식 강제: **"스펙과 다르게 판단한 것" 섹션 의무화.** 약한 모델의 최대 리스크는 틀리는 게 아니라 조용히 틀리는 것 — 편차 보고를 강제해 오케스트레이터가 잡는다.
+7. 모호하면 중단·보고: 임의 해석 금지, 선택지를 제시하게 할 것.
+
+## 검증자 분리
+
+중요 구현 완료 시 구현 워커의 자기검토에 의존하지 않는다. 신선한 컨텍스트의 별도 검증자(Haiku/Sonnet)를 스폰해 "지시서의 검증 항목을 실제로 통과하는지"만 확인시킨다. 구현자와 검증자는 같은 에이전트를 재사용하지 않는다 (신선한 눈이 자기검토보다 잘 잡는다).
+
+## 실패 사례 체크리스트 (재발 방지 — 사고가 나면 여기에 추가)
+
+- **재위임 연쇄** (2026-07-07): 워커가 Agent로 재위임 → 산출물 없이 토큰 소모. → 표준 계약 1번 + 스폰 후 1~2분 내 산출물 확인으로 방지.
+- **실행 환경 호환 미검증** (2026-07-07): npm latest(Expo SDK 57)로 스캐폴드했으나 App Store의 Expo Go는 SDK 54까지만 지원 → 실기기 테스트 불가, 전체 다운그레이드로 복구. → 새 스택 도입/스캐폴드 시 개발 루프의 실행 환경(스토어 앱 버전, OS 최소사양 등)과의 호환을 **먼저** 검증한다. npm "latest"는 실행 환경보다 앞설 수 있다.
+- **환경변수 전달 오해** (2026-07-07): 사용자 터미널의 `export`는 Claude의 셸에 전달되지 않는다 (별도 프로세스). → 환경변수는 `.claude/settings.local.json`의 `env`에 저장한다.
+
+## 기계적 검증 게이트 (.claude/settings.json — 모델의 선의에 의존하지 않는 층)
+
+- 원본 보호: `data/**`, `build/id_map.json`, `단어장 앱 만들기.md`는 Edit/Write가 permissions.deny로 차단됨 (clean.py 등 스크립트 경유 쓰기는 허용).
+- 자동 타입체크: `.ts/.tsx` 수정 시 PostToolUse 훅(`.claude/hooks/tsc-check.sh`)이 `tsc --noEmit`을 비동기 실행, 실패 시 모델에게 자동 통보. 워커가 검증을 깜빡해도 시스템이 잡는다.
 
 # 프로젝트: 호랑이 잉글리시 (Horang English)
 
@@ -40,6 +69,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 npx expo start          # Metro 개발 서버 (Expo Go로 iPhone 실기기 테스트, QR 연결)
 python3 scripts/clean.py  # 원본 정제 파이프라인: data/voca_data.xlsx → build/ + review/ (인자 없음, 멱등)
 ```
+
+- 배치 생성 파이프라인(제출~content.db 빌드) 절차는 `/content-pipeline` 스킬 참조 (매 세션 로드 안 됨 — 필요할 때만).
 
 - 테스트·린트는 아직 미설정 (스캐폴드 직후 상태).
 - Expo SDK 57 / RN 0.86 / React 19.2 / TypeScript 6. 로컬 Node v22.
@@ -78,9 +109,12 @@ data/voca_data.xlsx (원본, 수정 금지)
 - 기억 인출 실패 5단계: 우스와이프 증가/좌스와이프 감소
 - Income: 점수별 금액을 표시하고 부모 지급 여부만 체크하는 장부 (결제 연동 없음)
 
-## 현재 상태 & 다음 단계 (2026-07-07)
+## 현재 상태 & 다음 단계 (2026-07-07 저녁)
 
-1. **(사용자 대기) review/word_review.csv 9건 + review/writing_manual.csv 29건 검수** — 목표 영단어 확정 필요
-2. 검수 반영 → LLM 뜻·예문 일괄 생성(검수 표본 포함) → content.db 빌드 (설계.md §3)
-3. 화면 구현 시작 (설계.md §4 순서: 단어장 테이블 → 가리기 애니메이션 → 복습/테스트)
-4. 잔여 미결은 설계.md §6 참고 (stable_id 규약은 clean.py에 구현 완료)
+1. 검수 완료·반영됨 (word_review 9건 + writing_manual 16건 resolved → words.final.json 재생성)
+2. **뜻·예문 생성 파이프라인 구축 완료** — `scripts/gen_content.py`(build-requests/submit/status/fetch/validate) + `scripts/pack_db.py` + `scripts/prompt/`(시스템 프롬프트·structured outputs 스키마, pos는 DDL 통제어휘인 영어 약어 enum). `build/batch_requests.jsonl` 2,430건(word 2,416 + writing 14) 생성·검증 완료. 모델 claude-opus-4-8 Batch API(50% 할인), 예상 비용 $20~35.
+3. **(사용자 대기) Anthropic API 자격증명 필요** — 이 머신에 API 키 없음. 키 확보 후: `submit` → `status` 폴링 → `fetch` → `validate`(+ review/content_sample.csv 표본 검수) → `pack_db.py` 순서.
+4. writing 검수 전량 완료(43/43): 29건은 정답 직접 확정(원형이 단어장에 없는 기초단어 변형 11건 포함 — word_id NULL + answer 직접 저장 패턴), 14건은 LLM 배치 대상. 검수 대기 큐 비어 있음.
+5. **화면 구현 완료** (2026-07-07 밤): 홈(통계 포함)·단어장(가리기/스와이프/TTS/예문 바텀시트)·복습·테스트(자기채점+Income 기록)·용돈 장부·발음 체크 장부·설정(난이도). 더미 content.db 기반 — 배치 완료 시 진짜 DB로 교체만 하면 됨.
+6. 프로젝트는 Expo SDK 54 고정 (스토어 Expo Go 호환 — 상세는 horang-worker-guide 스킬). 시스템 Python 3.9 — scripts/는 3.9 호환 문법 유지. anthropic SDK 0.116.0 --user 설치됨.
+7. 문서 미결로 워커가 기본값 정한 것들 (사용자 조정 가능): 테스트 쓰기문제 비율 30%(lib/reviewQueries.ts WRITING_RATIO), 점수→용돈 매핑(lib/incomeQueries.ts DEFAULT_INCOME_RULES: 100점 1000원/90↑ 800/70↑ 500/50↑ 300), 엿보기 1.4초, 발음 장부는 읽기 전용 누적(해소 UX 미결).

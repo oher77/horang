@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//private/tmp/claude-501/**)",
+      "Read(//Users/heruse/.claude/**)",
+      "mcp__ccd_session_mgmt__list_sessions"
+    ],
+    "deny": [
+      "Edit(data/**)",
+      "Write(data/**)",
+      "Edit(build/id_map.json)",
+      "Write(build/id_map.json)",
+      "Edit(단어장 앱 만들기.md)",
+      "Write(단어장 앱 만들기.md)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/tsc-check.sh",
+            "asyncRewake": true,
+            "timeout": 180,
+            "statusMessage": "타입체크 중..."
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,17 +1,30 @@
-raw,resolved_word,note
-두배의: d______,double,스펠링힌트+알파벳위치(dose~doubt) 일치 (2026-07-07 검수 승인)
-매주 수요일,every,알파벳위치(ever~evidence) → every 확정
-축제: f_______,festival,스펠링힌트 8자+알파벳위치(fertile~fever) 일치
-"털, 머리카락",hair,알파벳위치(habitat~half) 일치
-햄버거,hamburger,알파벳위치(halt~hammer) 일치
-무거운,heavy,알파벳위치(heaven~heel) 일치
-병원,hospital,알파벳위치(horror~host) 일치
-일주일에 3시간,hour,알파벳위치(hostile~household) → hour 확정
-주스,juice,알파벳위치(judge~junior) 일치
-"주방, 키친",kitchen,알파벳위치(kit~knee) 일치
-운,luck,알파벳위치(loyal~lump) 일치
-기계,machine,알파벳위치(luxury~mad) 일치
-영화 m_____,movie,알파벳위치(I'm moved~mud) 일치
-가위,scissors,알파벳위치(scholar~scope) 일치
-"비밀, 비밀의",secret,알파벳위치(second~secretary) 일치
-"신뢰, 믿음",trust,알파벳위치(troop~tube) 일치
+raw,resolved_word,note,answer
+두배의: d______,double,스펠링힌트+알파벳위치(dose~doubt) 일치 (2026-07-07 검수 승인),double
+매주 수요일,every,알파벳위치(ever~evidence) → every 확정,every
+축제: f_______,festival,스펠링힌트 8자+알파벳위치(fertile~fever) 일치,festival
+"털, 머리카락",hair,알파벳위치(habitat~half) 일치,hair
+햄버거,hamburger,알파벳위치(halt~hammer) 일치,hamburger
+무거운,heavy,알파벳위치(heaven~heel) 일치,heavy
+병원,hospital,알파벳위치(horror~host) 일치,hospital
+일주일에 3시간,hour,알파벳위치(hostile~household) → hour 확정,hour
+주스,juice,알파벳위치(judge~junior) 일치,juice
+"주방, 키친",kitchen,알파벳위치(kit~knee) 일치,kitchen
+운,luck,알파벳위치(loyal~lump) 일치,luck
+기계,machine,알파벳위치(luxury~mad) 일치,machine
+영화 m_____,movie,알파벳위치(I'm moved~mud) 일치,movie
+가위,scissors,알파벳위치(scholar~scope) 일치,scissors
+"비밀, 비밀의",secret,알파벳위치(second~secretary) 일치,secret
+"신뢰, 믿음",trust,알파벳위치(troop~tube) 일치,trust
+eat의 과거형,eat,"inflection 원형 확정 + 불규칙 변화형 정답 직접 확정 (2026-07-07 검수 승인, 원형 단어가 단어장에 없어 word 연결 불가)",ate
+fall의 동사변형,fall,"inflection 원형 확정 + 불규칙 변화형 정답 직접 확정 (2026-07-07 검수 승인, 원형 단어가 단어장에 없어 word 연결 불가)",fell - fallen
+feel의 동사변형,feel,"inflection 원형 확정 + 불규칙 변화형 정답 직접 확정 (2026-07-07 검수 승인, 원형 단어가 단어장에 없어 word 연결 불가)",felt - felt
+fly의 진행형,fly,"inflection 원형 확정 + 불규칙 변화형 정답 직접 확정 (2026-07-07 검수 승인, 원형 단어가 단어장에 없어 word 연결 불가)",flying
+forget의 동사변형,forget,"inflection 원형 확정 + 불규칙 변화형 정답 직접 확정 (2026-07-07 검수 승인, 원형 단어가 단어장에 없어 word 연결 불가)",forgot - forgotten
+get의 동사변형,get,"inflection 원형 확정 + 불규칙 변화형 정답 직접 확정 (2026-07-07 검수 승인, 원형 단어가 단어장에 없어 word 연결 불가)",got - gotten
+give의 동사변형,give,"inflection 원형 확정 + 불규칙 변화형 정답 직접 확정 (2026-07-07 검수 승인, 원형 단어가 단어장에 없어 word 연결 불가)",gave - given
+hear 동사변형,hear,"inflection 원형 확정 + 불규칙 변화형 정답 직접 확정 (2026-07-07 검수 승인, 원형 단어가 단어장에 없어 word 연결 불가)",heard - heard
+hit의 동사변형,hit,"inflection 원형 확정 + 불규칙 변화형 정답 직접 확정 (2026-07-07 검수 승인, 원형 단어가 단어장에 없어 word 연결 불가)",hit - hit
+man의 복수형,man,"inflection 원형 확정 + 불규칙 변화형 정답 직접 확정 (2026-07-07 검수 승인, 원형 단어가 단어장에 없어 word 연결 불가)",men
+meet의 동사변형,meet,"inflection 원형 확정 + 불규칙 변화형 정답 직접 확정 (2026-07-07 검수 승인, 원형 단어가 단어장에 없어 word 연결 불가)",met - met
+문장에서 often의 위치는?,often,"usage 단어 연결 + 정답 직접 제공 (2026-07-07 검수 승인, verbatim)",조동사와 be동사 뒤 일반동사 앞
+one 의 쓰임에 대해 (숫자말고),one,"usage 단어 연결 + 정답 직접 제공 (2026-07-07 검수 승인, verbatim)","앞에 언급된 명사와 종류는 같지만 특정하지 않은 다른 하나(부정대명사) 예: I lost my umbrella, so I need to buy one."

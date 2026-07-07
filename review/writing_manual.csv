@@ -1,12 +1,1 @@
 raw,guessed_word,prev_head,next_head,kind,note
-eat의 과거형,eat,east,economy,inflection,"문법변형 메모, 원형=eat (목표단어 자동확정: 메모에 원형 명시). 정답(변형형 문자열)은 gen_content 단계에서 채움"
-fall의 동사변형,fall,faith,False,inflection,"문법변형 메모, 원형=fall (목표단어 자동확정: 메모에 원형 명시). 정답(변형형 문자열)은 gen_content 단계에서 채움"
-feel의 동사변형,feel,feed,fellow,inflection,"문법변형 메모, 원형=feel (목표단어 자동확정: 메모에 원형 명시). 정답(변형형 문자열)은 gen_content 단계에서 채움"
-fly의 진행형,fly,flush,focus,inflection,"문법변형 메모, 원형=fly (목표단어 자동확정: 메모에 원형 명시). 정답(변형형 문자열)은 gen_content 단계에서 채움"
-forget의 동사변형,forget,forever,forgive,inflection,"문법변형 메모, 원형=forget (목표단어 자동확정: 메모에 원형 명시). 정답(변형형 문자열)은 gen_content 단계에서 채움"
-get의 동사변형,get,gesture,ghost,inflection,"문법변형 메모, 원형=get (목표단어 자동확정: 메모에 원형 명시). 정답(변형형 문자열)은 gen_content 단계에서 채움"
-give의 동사변형,give,giraffe,glad,inflection,"문법변형 메모, 원형=give (목표단어 자동확정: 메모에 원형 명시). 정답(변형형 문자열)은 gen_content 단계에서 채움"
-hear 동사변형,hear,health,heat,inflection,"문법변형 메모, 원형=hear (목표단어 자동확정: 메모에 원형 명시). 정답(변형형 문자열)은 gen_content 단계에서 채움"
-hit의 동사변형,hit,hire,hobby,inflection,"문법변형 메모, 원형=hit (목표단어 자동확정: 메모에 원형 명시). 정답(변형형 문자열)은 gen_content 단계에서 채움"
-man의 복수형,man,male,manage,inflection,"문법변형 메모, 원형=man (목표단어 자동확정: 메모에 원형 명시). 정답(변형형 문자열)은 gen_content 단계에서 채움"
-meet의 동사변형,meet,medium,melon,inflection,"문법변형 메모, 원형=meet (목표단어 자동확정: 메모에 원형 명시). 정답(변형형 문자열)은 gen_content 단계에서 채움"

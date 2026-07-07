@@ -8,8 +8,7 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "plugins": [
-      "expo-router",
-      "expo-status-bar"
+      "expo-router"
     ],
     "ios": {
       "supportsTablet": true

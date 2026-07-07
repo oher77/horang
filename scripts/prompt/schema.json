@@ -1,0 +1,54 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["meanings", "examples"],
+  "properties": {
+    "meanings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["pos", "meaning_ko", "sort_order"],
+        "properties": {
+          "pos": {
+            "type": "string",
+            "enum": ["n", "v", "a", "ad", "prep", "conj", "pron", "int", "aux", "det", "phrase"]
+          },
+          "meaning_ko": {
+            "type": "string"
+          },
+          "sort_order": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["pos", "level", "en", "ko", "sort_order"],
+        "properties": {
+          "pos": {
+            "type": "string",
+            "enum": ["n", "v", "a", "ad", "prep", "conj", "pron", "int", "aux", "det", "phrase"]
+          },
+          "level": {
+            "type": "integer",
+            "enum": [1, 2, 3]
+          },
+          "en": {
+            "type": "string"
+          },
+          "ko": {
+            "type": "string"
+          },
+          "sort_order": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  }
+}

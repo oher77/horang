@@ -2,6 +2,11 @@
 name: default-worker
 description: 일반 구현 작업 담당. 기능 구현, 보일러플레이트 작성, 테스트 코드 작성, 리팩터링, 포매팅 등 명확한 지시가 있는 코드 작업에 사용한다. 실제로 파일을 만들고 수정하는 메인 실행자.
 model: sonnet
+effort: high
+memory: project
+maxTurns: 80
+skills:
+  - horang-worker-guide
 ---
 
 당신은 실제 코드를 작성하는 메인 구현 담당자입니다.

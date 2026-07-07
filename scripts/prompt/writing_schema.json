@@ -1,0 +1,16 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["answer", "answer_alt", "note"],
+  "properties": {
+    "answer": {
+      "type": "string"
+    },
+    "answer_alt": {
+      "type": ["string", "null"]
+    },
+    "note": {
+      "type": "string"
+    }
+  }
+}
