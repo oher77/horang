@@ -10,9 +10,14 @@
  */
 
 import { Stack } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import {
+  getIncomeRules,
+  updateIncomeRuleAmount,
+  type IncomeRule,
+} from '../../lib/incomeQueries';
 import { setDifficultyLevel, useSettingsStore, type DifficultyLevel } from '../../lib/settings';
 
 const LEVEL_OPTIONS: { level: DifficultyLevel; label: string; hint: string }[] = [
@@ -66,6 +71,120 @@ export default function SettingsScreen() {
       </View>
 
       {error && <Text style={styles.error}>{error}</Text>}
+
+      <IncomeRulesSection />
+    </View>
+  );
+}
+
+/**
+ * 테스트 점수별 용돈(income_rule.amount) 편집 섹션.
+ * 구간(min_score)은 고정 — 화면에는 표시만 하고 편집 불가. 금액만 TextInput으로
+ * 수정해 blur 시 즉시 user.db에 저장한다(다른 설정 항목과 동일한 즉시반영 패턴).
+ */
+function IncomeRulesSection() {
+  const [rules, setRules] = useState<IncomeRule[]>([]);
+  const [drafts, setDrafts] = useState<Record<number, string>>({});
+  const [loaded, setLoaded] = useState(false);
+  const [savingId, setSavingId] = useState<number | null>(null);
+  const [savedId, setSavedId] = useState<number | null>(null);
+  const [rowError, setRowError] = useState<Record<number, string>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    getIncomeRules()
+      .then((rows) => {
+        if (cancelled) return;
+        setRules(rows);
+        setDrafts(Object.fromEntries(rows.map((r) => [r.id, String(r.amount)])));
+        setLoaded(true);
+      })
+      .catch(() => {
+        if (!cancelled) setLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleChangeText = useCallback((ruleId: number, text: string) => {
+    // 숫자만 허용(음수/소수점 입력 자체를 막아 즉시 피드백)
+    const digitsOnly = text.replace(/[^0-9]/g, '');
+    setDrafts((prev) => ({ ...prev, [ruleId]: digitsOnly }));
+    setSavedId(null);
+  }, []);
+
+  const handleBlur = useCallback(async (rule: IncomeRule) => {
+    const draft = drafts[rule.id] ?? '';
+    setRowError((prev) => ({ ...prev, [rule.id]: '' }));
+
+    if (draft === '') {
+      // 빈 입력은 저장하지 않고 이전 값으로 되돌린다.
+      setDrafts((prev) => ({ ...prev, [rule.id]: String(rule.amount) }));
+      return;
+    }
+
+    const amount = Number(draft);
+    if (!Number.isInteger(amount) || amount < 0) {
+      setRowError((prev) => ({ ...prev, [rule.id]: '0 이상의 숫자만 입력하세요.' }));
+      setDrafts((prev) => ({ ...prev, [rule.id]: String(rule.amount) }));
+      return;
+    }
+
+    if (amount === rule.amount) return; // 변경 없음
+
+    setSavingId(rule.id);
+    try {
+      await updateIncomeRuleAmount(rule.id, amount);
+      setRules((prev) => prev.map((r) => (r.id === rule.id ? { ...r, amount } : r)));
+      setSavedId(rule.id);
+    } catch (err) {
+      setRowError((prev) => ({
+        ...prev,
+        [rule.id]: err instanceof Error ? err.message : String(err),
+      }));
+      setDrafts((prev) => ({ ...prev, [rule.id]: String(rule.amount) }));
+    } finally {
+      setSavingId(null);
+    }
+  }, [drafts]);
+
+  return (
+    <View style={styles.incomeSection}>
+      <Text style={styles.sectionTitle}>테스트 점수별 용돈</Text>
+      <Text style={styles.sectionDesc}>
+        점수 구간별 지급 금액을 수정할 수 있습니다. 구간 기준은 고정입니다.
+        이미 채점된 지난 테스트의 용돈에는 소급 적용되지 않고, 다음 테스트부터 새 금액이 적용됩니다.
+      </Text>
+
+      {!loaded && <Text style={styles.optionHint}>불러오는 중…</Text>}
+
+      <View style={styles.incomeRows}>
+        {rules.map((rule) => (
+          <View key={rule.id} style={styles.incomeRow}>
+            <Text style={styles.incomeRowLabel}>{rule.min_score}점 이상</Text>
+            <View style={styles.incomeInputWrap}>
+              <TextInput
+                style={styles.incomeInput}
+                keyboardType="number-pad"
+                value={drafts[rule.id] ?? ''}
+                onChangeText={(text) => handleChangeText(rule.id, text)}
+                onBlur={() => handleBlur(rule)}
+                editable={savingId !== rule.id}
+                maxLength={6}
+              />
+              <Text style={styles.incomeWon}>원</Text>
+            </View>
+          </View>
+        ))}
+      </View>
+
+      {Object.entries(rowError).map(([ruleId, msg]) =>
+        msg ? (
+          <Text key={ruleId} style={styles.error}>{msg}</Text>
+        ) : null,
+      )}
+      {savedId !== null && <Text style={styles.savedText}>저장되었습니다.</Text>}
     </View>
   );
 }
@@ -123,6 +242,55 @@ const styles = StyleSheet.create({
   error: {
     marginTop: 20,
     color: '#c0392b',
+    textAlign: 'center',
+  },
+  incomeSection: {
+    marginTop: 36,
+  },
+  incomeRows: {
+    marginTop: 16,
+    gap: 10,
+  },
+  incomeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  incomeRowLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#333',
+  },
+  incomeInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  incomeInput: {
+    minWidth: 70,
+    textAlign: 'right',
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#333',
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+  },
+  incomeWon: {
+    fontSize: 14,
+    color: '#666',
+  },
+  savedText: {
+    marginTop: 12,
+    fontSize: 13,
+    color: '#2e8b57',
     textAlign: 'center',
   },
 });

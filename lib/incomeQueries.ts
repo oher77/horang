@@ -68,6 +68,37 @@ export async function getIncomeForScore(score100: number): Promise<number> {
   return row?.amount ?? 0;
 }
 
+/**
+ * 설정 화면의 "점수별 용돈" 편집 UI용 규칙 전체 목록 (Q-INCOME-RULES,
+ * 설계.md §4.4). min_score 내림차순 — 화면에 100점→0점 순으로 노출.
+ * 비어 있으면 lazy seed 후 다시 조회한다.
+ */
+export async function getIncomeRules(): Promise<IncomeRule[]> {
+  const userDb = getUserDb();
+  await ensureIncomeRules();
+  return userDb.getAllAsync<IncomeRule>(
+    'SELECT id, min_score, amount FROM income_rule ORDER BY min_score DESC',
+  );
+}
+
+/**
+ * 특정 구간(income_rule.id)의 금액만 수정한다. 구간 경계(min_score)는 이번
+ * 기능 범위 밖 — 고정값으로 취급하고 절대 UPDATE하지 않는다.
+ * 이미 기록된 과거 test_session.income_amount는 저장 시점의 스냅샷이라
+ * 소급 변경되지 않는다(설계.md §1.3 income_amount 컬럼 주석 참고) — 새로
+ * 채점되는 테스트부터 새 금액이 적용된다.
+ *
+ * amount는 0 이상의 정수만 허용. 그 외 값은 호출측에서 걸러야 하지만
+ * 방어적으로 여기서도 재검증한다.
+ */
+export async function updateIncomeRuleAmount(ruleId: number, amount: number): Promise<void> {
+  if (!Number.isInteger(amount) || amount < 0) {
+    throw new Error('용돈 금액은 0 이상의 정수여야 합니다.');
+  }
+  const userDb = getUserDb();
+  await userDb.runAsync('UPDATE income_rule SET amount = ? WHERE id = ?', [amount, ruleId]);
+}
+
 /** 월별 Income 목록 1행 (Q-RECENT5 확장 — 장부 화면은 전체 월 목록이 필요). */
 export interface IncomeSessionRow {
   sessionId: number;

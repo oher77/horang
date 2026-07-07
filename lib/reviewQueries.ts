@@ -188,10 +188,16 @@ export interface SavedTestSession {
  * 채점 확정 시 income_rule을 매칭해 income_amount를 스냅샷 저장한다
  * (설계.md §5 Q-INCOME-FOR-SCORE, §1.3 "income_amount -- income_rule 적용 결과(스냅샷)").
  * paid는 부모 지급 체크 전이므로 DEFAULT 0 그대로 둔다.
+ *
+ * existingSessionId를 넘기면 새로 INSERT하지 않고 기존 세션/문항을 갱신한다
+ * (기획서 "점수 확인 화면 > 다시 메기기 버튼" — 같은 테스트를 재채점해 "점수 확인"을
+ * 다시 누르는 흐름에서 세션이 중복 생성되지 않도록 UPSERT로 처리. 설계.md에는
+ * 재채점 시나리오의 저장 방식이 명시돼 있지 않아 임의로 정함 — 완료 보고 참고).
  */
 export async function saveTestSession(
   dayId: number,
   results: TestItemResult[],
+  existingSessionId?: number,
 ): Promise<SavedTestSession> {
   const userDb = getUserDb();
   const today = todayEpochDay();
@@ -202,15 +208,26 @@ export async function saveTestSession(
   const score100 = totalCount > 0 ? Math.round((correctCount / totalCount) * 100) : 0;
   const incomeAmount = await getIncomeForScore(score100);
 
-  let sessionId = 0;
+  let sessionId = existingSessionId ?? 0;
 
   await userDb.withTransactionAsync(async () => {
-    const result = await userDb.runAsync(
-      `INSERT INTO test_session (day_id, taken_day, taken_ms, total_count, correct_count, score100, income_amount)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [dayId, today, nowMs, totalCount, correctCount, score100, incomeAmount],
-    );
-    sessionId = result.lastInsertRowId;
+    if (existingSessionId) {
+      await userDb.runAsync(
+        `UPDATE test_session
+         SET taken_day = ?, taken_ms = ?, total_count = ?, correct_count = ?, score100 = ?, income_amount = ?
+         WHERE id = ?`,
+        [today, nowMs, totalCount, correctCount, score100, incomeAmount, existingSessionId],
+      );
+      await userDb.runAsync(`DELETE FROM test_item WHERE session_id = ?`, [existingSessionId]);
+      sessionId = existingSessionId;
+    } else {
+      const result = await userDb.runAsync(
+        `INSERT INTO test_session (day_id, taken_day, taken_ms, total_count, correct_count, score100, income_amount)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [dayId, today, nowMs, totalCount, correctCount, score100, incomeAmount],
+      );
+      sessionId = result.lastInsertRowId;
+    }
 
     for (const r of results) {
       await userDb.runAsync(

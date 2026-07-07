@@ -109,12 +109,10 @@ data/voca_data.xlsx (원본, 수정 금지)
 - 기억 인출 실패 5단계: 우스와이프 증가/좌스와이프 감소
 - Income: 점수별 금액을 표시하고 부모 지급 여부만 체크하는 장부 (결제 연동 없음)
 
-## 현재 상태 & 다음 단계 (2026-07-07 저녁)
+## 현재 상태 & 다음 단계 (2026-07-08)
 
-1. 검수 완료·반영됨 (word_review 9건 + writing_manual 16건 resolved → words.final.json 재생성)
-2. **뜻·예문 생성 파이프라인 구축 완료** — `scripts/gen_content.py`(build-requests/submit/status/fetch/validate) + `scripts/pack_db.py` + `scripts/prompt/`(시스템 프롬프트·structured outputs 스키마, pos는 DDL 통제어휘인 영어 약어 enum). `build/batch_requests.jsonl` 2,430건(word 2,416 + writing 14) 생성·검증 완료. 모델 claude-opus-4-8 Batch API(50% 할인), 예상 비용 $20~35.
-3. **(사용자 대기) Anthropic API 자격증명 필요** — 이 머신에 API 키 없음. 키 확보 후: `submit` → `status` 폴링 → `fetch` → `validate`(+ review/content_sample.csv 표본 검수) → `pack_db.py` 순서.
-4. writing 검수 전량 완료(43/43): 29건은 정답 직접 확정(원형이 단어장에 없는 기초단어 변형 11건 포함 — word_id NULL + answer 직접 저장 패턴), 14건은 LLM 배치 대상. 검수 대기 큐 비어 있음.
-5. **화면 구현 완료** (2026-07-07 밤): 홈(통계 포함)·단어장(가리기/스와이프/TTS/예문 바텀시트)·복습·테스트(자기채점+Income 기록)·용돈 장부·발음 체크 장부·설정(난이도). 더미 content.db 기반 — 배치 완료 시 진짜 DB로 교체만 하면 됨.
-6. 프로젝트는 Expo SDK 54 고정 (스토어 Expo Go 호환 — 상세는 horang-worker-guide 스킬). 시스템 Python 3.9 — scripts/는 3.9 호환 문법 유지. anthropic SDK 0.116.0 --user 설치됨.
-7. 문서 미결로 워커가 기본값 정한 것들 (사용자 조정 가능): 테스트 쓰기문제 비율 30%(lib/reviewQueries.ts WRITING_RATIO), 점수→용돈 매핑(lib/incomeQueries.ts DEFAULT_INCOME_RULES: 100점 1000원/90↑ 800/70↑ 500/50↑ 300), 엿보기 1.4초, 발음 장부는 읽기 전용 누적(해소 UX 미결).
+1. **콘텐츠 완성** — 검수 전량 완료(word 9건 + writing 43/43), Batch API 생성 2,430건 전부 성공, 커버리지 누락 152건은 `repair` 서브커맨드 반복 실행으로 0건 수렴, validate 전 항목 통과. `assets/db/content.db` 실데이터 빌드 완료 (word 2,416 / meaning 3,719 / example 11,411 / writing 43, 2.9MB). 파이프라인 절차는 `/content-pipeline` 스킬 참조.
+2. **화면 구현 완료** — 홈(통계: 최근5일 점수·낯가림 top10)·단어장(가리기 애니메이션/스와이프 5단계/TTS/난이도별 예문 바텀시트)·복습(7오프셋)·테스트(혼합 출제·자기채점·Income 기록)·용돈 장부(지급 체크)·발음 체크 장부·설정(난이도). Expo Go 실기기 구동 확인됨.
+3. 프로젝트는 **Expo SDK 54 고정** (스토어 Expo Go 호환 — 상세는 horang-worker-guide 스킬). 시스템 Python 3.9. anthropic SDK 0.116.0 --user 설치됨.
+4. 문서 미결로 기본값 정한 것들 (사용자 조정 가능): 테스트 쓰기문제 비율 30%(lib/reviewQueries.ts WRITING_RATIO), 점수→용돈 매핑(lib/incomeQueries.ts DEFAULT_INCOME_RULES: 100점 1000원/90↑ 800/70↑ 500/50↑ 300), 엿보기 1.4초, 발음 장부는 읽기 전용 누적(해소 UX 미결).
+5. **다음 후보**: 실기기 전 화면 QA(체크리스트는 각 워커 완료 보고 참조) → 사용자 피드백 반영 → 단어장 예문 컬럼 추가 여부 결정 → 배포 준비(EAS 빌드, 유료 Apple 계정 필요 시점에 제안).

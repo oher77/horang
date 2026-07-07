@@ -2,7 +2,6 @@ import { router } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import HomeStats from '../components/stats/HomeStats';
 import { epochDayToDateString, todayEpochDay } from '../lib/dates';
 import { ensureTodayDay, type DayWithWords } from '../lib/queries';
 
@@ -54,10 +53,6 @@ export default function Index() {
             <Text style={styles.secondaryButtonText}>테스트</Text>
           </Pressable>
 
-          <Pressable style={styles.secondaryButton} onPress={() => router.push('/income')}>
-            <Text style={styles.secondaryButtonText}>용돈 장부</Text>
-          </Pressable>
-
           <Pressable style={styles.secondaryButton} onPress={() => router.push('/pronunciation')}>
             <Text style={styles.secondaryButtonText}>발음 체크</Text>
           </Pressable>
@@ -66,7 +61,9 @@ export default function Index() {
             <Text style={styles.secondaryButtonText}>설정</Text>
           </Pressable>
 
-          <HomeStats />
+          <Pressable style={styles.secondaryButton} onPress={() => router.push('/achievements')}>
+            <Text style={styles.secondaryButtonText}>내 자랑스런 업적</Text>
+          </Pressable>
         </View>
       )}
     </ScrollView>
