@@ -25,12 +25,28 @@ import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, Text, V
 
 import { epochDayToDateString, toEpochDay } from '../../lib/dates';
 import {
+  getMonthHabitBonusTotal,
+  listHabitBonusesForMonth,
+  setHabitBonusPaid,
+  type HabitBonusRow,
+} from '../../lib/habitQueries';
+import {
   getIncomeSessionsThisMonth,
   getMonthIncomeTotal,
   setSessionPaid,
   type IncomeSessionRow,
 } from '../../lib/incomeQueries';
 import { getRecentScores, getScaryWordsTop10, type RecentScore, type ScaryWord } from '../../lib/statsQueries';
+
+/** 'YYYY-MM' 형식의 이번 달 키 (habitQueries 조회용, 로컬타임 기준). */
+function currentYearMonth(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function habitBonusLabel(kind: HabitBonusRow['kind']): string {
+  return kind === 'full_day' ? '하루 4회 완주' : '7일 연속 보너스';
+}
 
 const BAR_MAX_HEIGHT = 80;
 
@@ -50,6 +66,10 @@ export default function AchievementsScreen() {
   const [incomeSessions, setIncomeSessions] = useState<IncomeSessionRow[] | null>(null);
   const [monthTotal, setMonthTotal] = useState(0);
   const [incomeError, setIncomeError] = useState<string | null>(null);
+
+  const [habitBonuses, setHabitBonuses] = useState<HabitBonusRow[] | null>(null);
+  const [habitBonusTotal, setHabitBonusTotal] = useState(0);
+  const [habitError, setHabitError] = useState<string | null>(null);
 
   const loadStats = useCallback(() => {
     setStatsError(null);
@@ -71,10 +91,22 @@ export default function AchievementsScreen() {
       .catch((err: unknown) => setIncomeError(err instanceof Error ? err.message : String(err)));
   }, []);
 
+  const loadHabit = useCallback(() => {
+    setHabitError(null);
+    const yearMonth = currentYearMonth();
+    Promise.all([listHabitBonusesForMonth(yearMonth), getMonthHabitBonusTotal(yearMonth)])
+      .then(([rows, total]) => {
+        setHabitBonuses(rows);
+        setHabitBonusTotal(total);
+      })
+      .catch((err: unknown) => setHabitError(err instanceof Error ? err.message : String(err)));
+  }, []);
+
   useEffect(() => {
     loadStats();
     loadIncome();
-  }, [loadStats, loadIncome]);
+    loadHabit();
+  }, [loadStats, loadIncome, loadHabit]);
 
   const handleTogglePaid = useCallback(async (row: IncomeSessionRow) => {
     const next = !row.paid;
@@ -93,6 +125,17 @@ export default function AchievementsScreen() {
     }
   }, []);
 
+  const handleToggleHabitPaid = useCallback(async (row: HabitBonusRow) => {
+    const next = !row.paid;
+    setHabitBonuses((prev) => (prev ? prev.map((r) => (r.id === row.id ? { ...r, paid: next } : r)) : prev));
+    try {
+      await setHabitBonusPaid(row.id, next);
+    } catch (err) {
+      setHabitBonuses((prev) => (prev ? prev.map((r) => (r.id === row.id ? { ...r, paid: row.paid } : r)) : prev));
+      setHabitError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
   return (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.container}>
       <Stack.Screen options={{ title: '내 자랑스런 업적' }} />
@@ -103,9 +146,12 @@ export default function AchievementsScreen() {
 
       <IncomeSection
         sessions={incomeSessions}
-        monthTotal={monthTotal}
+        monthTotal={monthTotal + habitBonusTotal}
         error={incomeError}
         onTogglePaid={handleTogglePaid}
+        habitBonuses={habitBonuses}
+        habitError={habitError}
+        onToggleHabitPaid={handleToggleHabitPaid}
       />
     </ScrollView>
   );
@@ -181,11 +227,17 @@ function IncomeSection({
   monthTotal,
   error,
   onTogglePaid,
+  habitBonuses,
+  habitError,
+  onToggleHabitPaid,
 }: {
   sessions: IncomeSessionRow[] | null;
   monthTotal: number;
   error: string | null;
   onTogglePaid: (row: IncomeSessionRow) => void;
+  habitBonuses: HabitBonusRow[] | null;
+  habitError: string | null;
+  onToggleHabitPaid: (row: HabitBonusRow) => void;
 }) {
   return (
     <View style={styles.section}>
@@ -226,6 +278,37 @@ function IncomeSection({
               <Pressable
                 style={[styles.paidToggle, item.paid && styles.paidToggleOn]}
                 onPress={() => onTogglePaid(item)}
+                hitSlop={8}
+              >
+                <Text style={[styles.paidToggleText, item.paid && styles.paidToggleTextOn]}>
+                  {item.paid ? '지급완료' : '미지급'}
+                </Text>
+              </Pressable>
+            </View>
+          )}
+        />
+      )}
+
+      {habitError && <Text style={styles.error}>{habitError}</Text>}
+
+      {!habitError && habitBonuses && habitBonuses.length > 0 && (
+        <FlatList
+          data={habitBonuses}
+          keyExtractor={(item) => String(item.id)}
+          scrollEnabled={false}
+          contentContainerStyle={styles.habitListContent}
+          renderItem={({ item }) => (
+            <View style={styles.row}>
+              <View style={styles.rowLeft}>
+                <Text style={styles.dayLabel}>{habitBonusLabel(item.kind)}</Text>
+                <Text style={styles.dateText}>{epochDayToDateString(item.local_day)}</Text>
+              </View>
+              <View style={styles.rowMid}>
+                <Text style={styles.incomeText}>{item.amount.toLocaleString()}원</Text>
+              </View>
+              <Pressable
+                style={[styles.paidToggle, item.paid && styles.paidToggleOn]}
+                onPress={() => onToggleHabitPaid(item)}
                 hitSlop={8}
               >
                 <Text style={[styles.paidToggleText, item.paid && styles.paidToggleTextOn]}>
@@ -354,6 +437,10 @@ const styles = StyleSheet.create({
   },
   listContent: {
     gap: 12,
+  },
+  habitListContent: {
+    gap: 12,
+    marginTop: 12,
   },
   row: {
     flexDirection: 'row',

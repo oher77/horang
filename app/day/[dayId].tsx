@@ -1,11 +1,20 @@
-import { Stack, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
-import type { ViewToken } from 'react-native';
+import { Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, AppState, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import type { AppStateStatus, ViewToken } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 
 import DayWordRow, { ROW_HEIGHT } from '../../components/DayWordRow';
 import WordDetailSheet from '../../components/WordDetailSheet';
+import {
+  currentSlotIndex,
+  DEFAULT_HABIT_BONUS,
+  getTodaySlots,
+  isFirstSessionOfToday,
+  isTodayDay,
+  recordRetrievalSession,
+} from '../../lib/habitQueries';
 import {
   getDayIndex,
   getDayWords,
@@ -20,6 +29,11 @@ import { getWordDetail, type WordDetail } from '../../lib/wordDetail';
 // (설계.md §4.5). 화면 밖 행은 FlatList가 언마운트하므로 자연히 대상에서 빠진다.
 const STAGGER_MS = 15;
 const PEEK_DURATION_MS = 1400;
+
+// 하루 4회 분산 인출 습관 시스템 — 세션 트래킹 상수 (설계.md §7.1, §7.3)
+const MIN_DWELL_MS = 150_000; // 최소 체류 150초(모든 세션 공통)
+const COVERAGE_RATIO = 0.7; // 첫 세션에만 적용되는 커버리지 임계
+const BANNER_DURATION_MS = 2000; // 완료 피드백 배너 표시 시간
 
 type ColumnKey = 'word' | 'meaning';
 
@@ -60,6 +74,27 @@ export default function DayScreen() {
   const [visibleIndexes, setVisibleIndexes] = useState<number[]>([]);
   const minVisibleIndexRef = useRef(0);
 
+  // --- 하루 4회 분산 인출 습관 시스템 — 세션 트래킹 (설계.md §7.1, §7.3) ---
+  // 트래킹 적용 여부: 오늘 Day가 아니거나 진입 시점이 데드존(슬롯 없음)이면 비활성.
+  const [trackingEnabled, setTrackingEnabled] = useState(false);
+  const [isFirstSession, setIsFirstSession] = useState(false);
+  const [wordsRequiredForCoverage, setWordsRequiredForCoverage] = useState(0);
+  const coveredWordIdsRef = useRef<Set<number>>(new Set());
+  const [coveredCount, setCoveredCount] = useState(0);
+  const [sessionRecorded, setSessionRecorded] = useState(false);
+  // 첫 세션 진행 표시("이번 인출 X/N")와 달리 이후 세션은 남은 체류 시간(초)을 보여준다.
+  const [dwellRemainingSec, setDwellRemainingSec] = useState<number | null>(null);
+  const [completionBanner, setCompletionBanner] = useState<string | null>(null);
+
+  // 체류 타이머 상태 — "남은 시간만큼 setTimeout + 일시정지 시 잔여시간 보존" 방식.
+  const dwellRemainingMsRef = useRef(MIN_DWELL_MS);
+  const dwellTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dwellIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const dwellRunningSinceRef = useRef<number | null>(null); // 현재 구간 시작 epoch ms (null = 정지 중)
+  const dwellSatisfiedRef = useRef(false);
+  const screenFocusedRef = useRef(true);
+  const appActiveRef = useRef(AppState.currentState === 'active');
+
   useEffect(() => {
     const id = Number(dayId);
     if (!Number.isFinite(id)) {
@@ -81,11 +116,169 @@ export default function DayScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dayId]);
 
+  // 세션 트래킹 초기화 — 오늘 Day + 데드존 아님(currentSlotIndex != null) 확인 후에만 활성화.
+  // words가 로드돼야 커버리지 임계(ceil(N*0.7))를 계산할 수 있으므로 words 로드와 별도 effect.
+  useEffect(() => {
+    const id = Number(dayId);
+    if (!Number.isFinite(id) || !words) return;
+
+    let cancelled = false;
+    Promise.all([isTodayDay(id), isFirstSessionOfToday(), currentSlotIndex(), getTodaySlots()]).then(
+      ([todayDay, firstSession, slotIndex, todaySlots]) => {
+        if (cancelled) return;
+        if (!todayDay || slotIndex === null) {
+          // 오늘 Day가 아니거나 데드존 — 트래킹도 인디케이터도 시작하지 않는다.
+          return;
+        }
+        setIsFirstSession(firstSession);
+        setWordsRequiredForCoverage(Math.ceil(words.length * COVERAGE_RATIO));
+        if (todaySlots[slotIndex]) {
+          // 현재 슬롯이 이미 확정됨 — 판정 시도 없이 인디케이터도 숨긴다(recordRetrievalSession의
+          // INSERT OR IGNORE도 결국 무시하지만, 헛되이 타이머를 돌릴 필요가 없어 미리 잠근다).
+          setSessionRecorded(true);
+        }
+        setTrackingEnabled(true);
+      },
+    );
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dayId, words]);
+
   useEffect(() => {
     return () => {
       // 화면 이탈 시 pending peek 타이머 정리
       peekTimers.current.forEach((t) => clearTimeout(t));
       peekTimers.current.clear();
+    };
+  }, []);
+
+  // dayId를 숫자로 안전 변환 (recordRetrievalSession 호출용). 트래킹 로직 전반에서 재사용.
+  const dayIdNum = Number(dayId);
+
+  // 조건 충족 시 recordRetrievalSession() 호출 — 순서: isTodayDay/currentSlotIndex 등
+  // 슬롯 귀속 판단은 lib/habitQueries.ts 내부가 전담하므로 여기서는 호출만 한다.
+  const tryFinalizeSession = useCallback(() => {
+    if (!trackingEnabled || sessionRecorded) return;
+    if (!dwellSatisfiedRef.current) return;
+    if (isFirstSession && coveredWordIdsRef.current.size < wordsRequiredForCoverage) return;
+    if (!Number.isFinite(dayIdNum)) return;
+
+    // 조건 충족 순간 즉시 잠가 중복 호출 방지 (DB round-trip 중 재진입 방지)
+    setSessionRecorded(true);
+
+    recordRetrievalSession(dayIdNum)
+      .then((result) => {
+        if (!result.recorded) {
+          // 이미 이 슬롯이 찬 상태 등 — 조용히 무시(스펙: recorded=false면 피드백 없음)
+          return;
+        }
+        let message = '이번 슬롯 인출 완료 ●';
+        if (result.fullDayBonusPaid && result.streakBonusPaid) {
+          message = `오늘 4회 완주! +${DEFAULT_HABIT_BONUS.fullDay}원, ${result.streakDays}일 연속 +${DEFAULT_HABIT_BONUS.streak7}원`;
+        } else if (result.fullDayBonusPaid) {
+          message = `오늘 4회 완주! +${DEFAULT_HABIT_BONUS.fullDay}원`;
+        }
+        setCompletionBanner(message);
+        setTimeout(() => setCompletionBanner(null), BANNER_DURATION_MS);
+      })
+      .catch(() => {
+        // 습관 트래킹은 부가 기능 — 실패해도 학습 흐름을 막지 않는다.
+      });
+  }, [trackingEnabled, sessionRecorded, isFirstSession, wordsRequiredForCoverage, dayIdNum]);
+
+  const tryFinalizeRef = useRef(tryFinalizeSession);
+  tryFinalizeRef.current = tryFinalizeSession;
+
+  // 체류 타이머 일시정지 — 남은 시간을 dwellRemainingMsRef에 보존.
+  const pauseDwellTimer = useCallback(() => {
+    if (dwellTimerRef.current) {
+      clearTimeout(dwellTimerRef.current);
+      dwellTimerRef.current = null;
+    }
+    if (dwellIntervalRef.current) {
+      clearInterval(dwellIntervalRef.current);
+      dwellIntervalRef.current = null;
+    }
+    if (dwellRunningSinceRef.current !== null) {
+      const elapsed = Date.now() - dwellRunningSinceRef.current;
+      dwellRemainingMsRef.current = Math.max(0, dwellRemainingMsRef.current - elapsed);
+      dwellRunningSinceRef.current = null;
+    }
+  }, []);
+
+  // 체류 타이머 재개 — 잔여시간만큼 setTimeout을 새로 건다. 화면 focus AND 앱 active일 때만 호출.
+  const resumeDwellTimer = useCallback(() => {
+    if (!trackingEnabled || sessionRecorded || dwellSatisfiedRef.current) return;
+    if (dwellRunningSinceRef.current !== null) return; // 이미 실행 중
+    if (dwellRemainingMsRef.current <= 0) return;
+
+    dwellRunningSinceRef.current = Date.now();
+    dwellTimerRef.current = setTimeout(() => {
+      dwellRemainingMsRef.current = 0;
+      dwellRunningSinceRef.current = null;
+      dwellSatisfiedRef.current = true;
+      setDwellRemainingSec(0);
+      tryFinalizeRef.current();
+    }, dwellRemainingMsRef.current);
+
+    // 인디케이터 갱신용 1초 간격 tick (이후 세션의 "남은 시간 mm:ss" 표시)
+    dwellIntervalRef.current = setInterval(() => {
+      if (dwellRunningSinceRef.current === null) return;
+      const elapsed = Date.now() - dwellRunningSinceRef.current;
+      const remaining = Math.max(0, dwellRemainingMsRef.current - elapsed);
+      setDwellRemainingSec(Math.ceil(remaining / 1000));
+    }, 1000);
+  }, [trackingEnabled, sessionRecorded]);
+
+  // trackingEnabled가 켜지는 순간 타이머 시작 (화면 focus + 앱 active 전제)
+  useEffect(() => {
+    if (!trackingEnabled) return;
+    setDwellRemainingSec(Math.ceil(dwellRemainingMsRef.current / 1000));
+    if (screenFocusedRef.current && appActiveRef.current) {
+      resumeDwellTimer();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trackingEnabled]);
+
+  // AppState: background/inactive 시 일시정지, active 복귀 시 재개
+  useEffect(() => {
+    const handleAppStateChange = (nextState: AppStateStatus) => {
+      const wasActive = appActiveRef.current;
+      const isActive = nextState === 'active';
+      appActiveRef.current = isActive;
+      if (wasActive && !isActive) {
+        pauseDwellTimer();
+      } else if (!wasActive && isActive && screenFocusedRef.current) {
+        resumeDwellTimer();
+      }
+    };
+    const sub = AppState.addEventListener('change', handleAppStateChange);
+    return () => sub.remove();
+  }, [pauseDwellTimer, resumeDwellTimer]);
+
+  // 화면 blur/focus (expo-router) — 다른 화면으로 이동 시 일시정지, 복귀 시 재개
+  useFocusEffect(
+    useCallback(() => {
+      screenFocusedRef.current = true;
+      if (appActiveRef.current) {
+        resumeDwellTimer();
+      }
+      return () => {
+        screenFocusedRef.current = false;
+        pauseDwellTimer();
+      };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [pauseDwellTimer, resumeDwellTimer]),
+  );
+
+  // 화면 완전 이탈 시 타이머 정리 (cleanup 누락 방지)
+  useEffect(() => {
+    return () => {
+      if (dwellTimerRef.current) clearTimeout(dwellTimerRef.current);
+      if (dwellIntervalRef.current) clearInterval(dwellIntervalRef.current);
     };
   }, []);
 
@@ -105,7 +298,24 @@ export default function DayScreen() {
     setColumnHidden((prev) => ({ ...prev, [column]: !prev[column] }));
   }, []);
 
+  // day_word.id(dayWordId) → content_word_id 조회용 (커버리지 Set은 content_word_id 기준, §7.1)
+  const contentWordIdByDayWordId = useMemo(() => {
+    const map = new Map<number, number>();
+    words?.forEach((w) => map.set(w.id, w.content_word_id));
+    return map;
+  }, [words]);
+
   const handleTapCell = useCallback((dayWordId: number, column: ColumnKey) => {
+    // 커버리지 계상: 가려진 셀의 peek 탭만 (헤더 일괄 해제·예문 바텀시트는 별도 경로라 여기 안 들어옴)
+    if (trackingEnabled && !sessionRecorded) {
+      const contentWordId = contentWordIdByDayWordId.get(dayWordId);
+      if (contentWordId !== undefined && !coveredWordIdsRef.current.has(contentWordId)) {
+        coveredWordIdsRef.current.add(contentWordId);
+        setCoveredCount(coveredWordIdsRef.current.size);
+        tryFinalizeRef.current();
+      }
+    }
+
     const key = `${dayWordId}:${column}`;
     const existingTimer = peekTimers.current.get(key);
     if (existingTimer) clearTimeout(existingTimer);
@@ -124,7 +334,7 @@ export default function DayScreen() {
       peekTimers.current.delete(key);
     }, PEEK_DURATION_MS);
     peekTimers.current.set(key, timer);
-  }, []);
+  }, [trackingEnabled, sessionRecorded, contentWordIdByDayWordId]);
 
   const handleSwipeStage = useCallback((dayWordId: number, delta: number) => {
     // 낙관적 갱신 + user.db 영속 (설계.md §5: recall_stage = MAX(0,MIN(5, ...)))
@@ -204,6 +414,25 @@ export default function DayScreen() {
 
       {!error && !words && <ActivityIndicator style={styles.loading} />}
 
+      {trackingEnabled && !sessionRecorded && (
+        <RetrievalProgressIndicator
+          isFirstSession={isFirstSession}
+          coveredCount={coveredCount}
+          requiredCount={wordsRequiredForCoverage}
+          dwellRemainingSec={dwellRemainingSec}
+        />
+      )}
+
+      {completionBanner && (
+        <Animated.View
+          entering={FadeIn.duration(200)}
+          exiting={FadeOut.duration(300)}
+          style={[styles.completionBanner, { top: insets.top + 8 }]}
+        >
+          <Text style={styles.completionBannerText}>{completionBanner}</Text>
+        </Animated.View>
+      )}
+
       {!error && words && (
         <>
           <View style={[styles.row, styles.headerRow]}>
@@ -254,6 +483,41 @@ export default function DayScreen() {
         detail={sheetDetail}
         onClose={handleCloseSheet}
       />
+    </View>
+  );
+}
+
+// 인출 세션 진행 인디케이터 — 버튼 아님, 조용한 상단 표시(설계.md §7.1, §7.3).
+// 첫 세션: 커버리지 진행 "이번 인출 X/N". 이후 세션: 체류 충족까지 남은 시간(mm:ss).
+function RetrievalProgressIndicator({
+  isFirstSession,
+  coveredCount,
+  requiredCount,
+  dwellRemainingSec,
+}: {
+  isFirstSession: boolean;
+  coveredCount: number;
+  requiredCount: number;
+  dwellRemainingSec: number | null;
+}) {
+  if (isFirstSession) {
+    return (
+      <View style={styles.progressIndicator}>
+        <Text style={styles.progressIndicatorText}>
+          이번 인출 {Math.min(coveredCount, requiredCount)}/{requiredCount}
+        </Text>
+      </View>
+    );
+  }
+
+  if (dwellRemainingSec === null || dwellRemainingSec <= 0) return null;
+  const mm = String(Math.floor(dwellRemainingSec / 60)).padStart(2, '0');
+  const ss = String(dwellRemainingSec % 60).padStart(2, '0');
+  return (
+    <View style={styles.progressIndicator}>
+      <Text style={styles.progressIndicatorText}>
+        {mm}:{ss}
+      </Text>
     </View>
   );
 }
@@ -331,5 +595,31 @@ const styles = StyleSheet.create({
   meaningCell: {
     flex: 1,
     marginLeft: 4,
+  },
+  progressIndicator: {
+    alignItems: 'center',
+    paddingVertical: 4,
+    backgroundColor: '#fafafa',
+  },
+  progressIndicatorText: {
+    fontSize: 12,
+    color: '#aaa',
+  },
+  completionBanner: {
+    position: 'absolute',
+    left: 24,
+    right: 24,
+    zIndex: 10,
+    alignItems: 'center',
+    backgroundColor: 'rgba(40,40,40,0.92)',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  completionBannerText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
   },
 });

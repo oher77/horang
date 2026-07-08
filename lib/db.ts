@@ -177,7 +177,66 @@ CREATE TABLE IF NOT EXISTS test_item (
 CREATE INDEX IF NOT EXISTS idx_testitem_session ON test_item(session_id);
 CREATE INDEX IF NOT EXISTS idx_testitem_word    ON test_item(content_word_id);
 CREATE INDEX IF NOT EXISTS idx_testitem_wrong   ON test_item(content_word_id) WHERE is_wrong = 1;
+
+-- 하루 4회 분산 인출 로그 (설계.md §7.2). 하나의 확정된 인출 세션 = 1행.
+-- UNIQUE(local_day, slot_index)가 "슬롯당 1회"를 DB 차원에서 물리 보장(§7.1).
+CREATE TABLE IF NOT EXISTS retrieval_session (
+  id          INTEGER PRIMARY KEY,
+  local_day   INTEGER NOT NULL,              -- epoch day(로컬 자정 기준, §1.4). 스트릭·게이지 조회 키
+  slot_index  INTEGER NOT NULL,              -- 0..3 (설정된 슬롯 순서). 데드존은 기록 안 함
+  source      TEXT NOT NULL DEFAULT 'today', -- 'today'(오늘 단어장) | 'review'(복습) — 확장 여지(§7.6)
+  day_id      INTEGER REFERENCES day(id) ON DELETE SET NULL, -- 어느 Day를 훑었는지(감사용)
+  done_ms     INTEGER NOT NULL,              -- 확정 시각 epoch ms
+  UNIQUE(local_day, slot_index)              -- ★ 슬롯당 1회 인정(핵심 제약)
+);
+CREATE INDEX IF NOT EXISTS idx_retrieval_day ON retrieval_session(local_day);
+
+-- 슬롯 경계 설정(4행 고정, slot_index 0..3, 설계.md §7.2).
+CREATE TABLE IF NOT EXISTS slot_config (
+  slot_index  INTEGER PRIMARY KEY CHECK (slot_index BETWEEN 0 AND 3),
+  start_hour  INTEGER NOT NULL CHECK (start_hour BETWEEN 0 AND 23),
+  end_hour    INTEGER NOT NULL CHECK (end_hour BETWEEN 1 AND 24),  -- 24 = 자정
+  CHECK (start_hour < end_hour)
+);
+
+-- 습관 보너스 지급 스냅샷(§7.4). 시험 점수와 무관하므로 test_session에 섞지 않는다.
+CREATE TABLE IF NOT EXISTS habit_bonus (
+  id         INTEGER PRIMARY KEY,
+  local_day  INTEGER NOT NULL,
+  kind       TEXT NOT NULL,                  -- 'full_day' | 'streak7'
+  amount     INTEGER NOT NULL,               -- 지급 시점 스냅샷(상수가 바뀌어도 소급 안 함)
+  paid       INTEGER NOT NULL DEFAULT 0,     -- 부모 지급 체크(test_session.paid와 동일 개념)
+  created_ms INTEGER NOT NULL,
+  UNIQUE(local_day, kind)                    -- 하루 같은 종류 보너스 중복 지급 방지(멱등)
+);
 `;
+
+/** slot_config 기본 4행 시드값 (설계.md §7.2): (0,6,10)(1,10,15)(2,15,20)(3,20,24). */
+const DEFAULT_SLOT_CONFIG: ReadonlyArray<{ slot_index: number; start_hour: number; end_hour: number }> = [
+  { slot_index: 0, start_hour: 6, end_hour: 10 },
+  { slot_index: 1, start_hour: 10, end_hour: 15 },
+  { slot_index: 2, start_hour: 15, end_hour: 20 },
+  { slot_index: 3, start_hour: 20, end_hour: 24 },
+];
+
+/**
+ * slot_config lazy seed (ensureIncomeRules()와 동일 패턴, 설계.md §7.2 마이그레이션 절차 2).
+ * COUNT(*)=0일 때만 기본 4행을 트랜잭션으로 채운다. 이미 행이 있으면(사용자가 설정에서
+ * 편집한 경우 포함) 아무 것도 하지 않는다.
+ */
+async function ensureSlotConfig(db: SQLite.SQLiteDatabase): Promise<void> {
+  const row = await db.getFirstAsync<{ cnt: number }>('SELECT COUNT(*) AS cnt FROM slot_config');
+  if (row && row.cnt > 0) return;
+
+  await db.withTransactionAsync(async () => {
+    for (const slot of DEFAULT_SLOT_CONFIG) {
+      await db.runAsync(
+        'INSERT INTO slot_config (slot_index, start_hour, end_hour) VALUES (?, ?, ?)',
+        [slot.slot_index, slot.start_hour, slot.end_hour],
+      );
+    }
+  });
+}
 
 async function ensureUserDb(): Promise<SQLite.SQLiteDatabase> {
   const db = await SQLite.openDatabaseAsync(USER_DB_FILENAME);
@@ -188,10 +247,15 @@ async function ensureUserDb(): Promise<SQLite.SQLiteDatabase> {
     'INSERT OR IGNORE INTO settings (id, level, words_per_day) VALUES (1, 1, 20)',
   );
 
-  // app_meta 스키마 버전 기록
+  // slot_config 기본 4행 보장 (§7.2)
+  await ensureSlotConfig(db);
+
+  // app_meta 스키마 버전 기록 (신규 설치는 '2'로 seed)
   await db.runAsync(
-    "INSERT OR IGNORE INTO app_meta (key, value) VALUES ('user_schema_version', '1')",
+    "INSERT OR IGNORE INTO app_meta (key, value) VALUES ('user_schema_version', '2')",
   );
+  // 기존 설치(버전 '1')는 INSERT OR IGNORE로 올라가지 않으므로 명시적으로 갱신 (§7.2 마이그레이션 절차 3)
+  await db.runAsync("UPDATE app_meta SET value = '2' WHERE key = 'user_schema_version'");
 
   return db;
 }

@@ -1,15 +1,22 @@
-import { router, Stack } from 'expo-router';
+import { router, Stack, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { epochDayToDateString, todayEpochDay } from '../lib/dates';
+import { currentSlotIndex, getCurrentStreak, getTodaySlots } from '../lib/habitQueries';
 import { ensureTodayDay, type DayWithWords } from '../lib/queries';
+
+const TOTAL_SLOTS = 4;
 
 export default function Index() {
   const [today] = useState(() => epochDayToDateString(todayEpochDay()));
   const [day, setDay] = useState<DayWithWords | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [todaySlots, setTodaySlots] = useState<boolean[] | null>(null);
+  const [streak, setStreak] = useState(0);
+  const [activeSlot, setActiveSlot] = useState<number | null>(null);
 
   const loadTodayDay = useCallback(() => {
     setLoading(true);
@@ -20,15 +27,36 @@ export default function Index() {
       .finally(() => setLoading(false));
   }, []);
 
+  const loadHabit = useCallback(() => {
+    Promise.all([getTodaySlots(), getCurrentStreak(), currentSlotIndex()])
+      .then(([slots, streakDays, active]) => {
+        setTodaySlots(slots);
+        setStreak(streakDays);
+        setActiveSlot(active);
+      })
+      .catch(() => {
+        // 습관 배너는 부가 정보 — 조회 실패해도 메인 흐름(오늘 단어장)은 막지 않는다.
+      });
+  }, []);
+
   useEffect(() => {
     loadTodayDay();
   }, [loadTodayDay]);
+
+  // 단어장 화면에서 돌아올 때 게이지 갱신 필요(§7.3) — focus 시마다 재조회.
+  useFocusEffect(
+    useCallback(() => {
+      loadHabit();
+    }, [loadHabit]),
+  );
 
   return (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.container}>
       <Stack.Screen options={{ title: 'horang english' }} />
       <Text style={styles.title}>호랑이 잉글리시</Text>
       <Text style={styles.date}>{today}</Text>
+
+      <HabitBanner slots={todaySlots} streak={streak} activeSlot={activeSlot} />
 
       {loading && <ActivityIndicator style={styles.spacing} />}
 
@@ -73,6 +101,56 @@ export default function Index() {
         </View>
       )}
     </ScrollView>
+  );
+}
+
+/**
+ * 하루 4회 분산 인출 습관 배너 (설계.md §7.3).
+ * - 4칸 게이지: 확정 ● / 미확정 ○, 현재 시각이 속한 슬롯은 강조 테두리.
+ * - 스트릭 "🔥 N일 연속".
+ * - 데드존(activeSlot null)이면 게이지 회색 처리 + 안내 문구.
+ */
+function HabitBanner({
+  slots,
+  streak,
+  activeSlot,
+}: {
+  slots: boolean[] | null;
+  streak: number;
+  activeSlot: number | null;
+}) {
+  if (!slots) return null;
+
+  const isDeadZone = activeSlot === null;
+
+  return (
+    <View style={styles.habitBanner}>
+      <View style={styles.habitGauge}>
+        {Array.from({ length: TOTAL_SLOTS }, (_, i) => {
+          const filled = slots[i];
+          const isActive = activeSlot === i;
+          return (
+            <View
+              key={i}
+              style={[
+                styles.habitDot,
+                filled ? styles.habitDotFilled : styles.habitDotEmpty,
+                isDeadZone && styles.habitDotDeadZone,
+                isActive && styles.habitDotActive,
+              ]}
+            >
+              <Text style={[styles.habitDotText, isDeadZone && styles.habitDotTextDeadZone]}>
+                {filled ? '●' : '○'}
+              </Text>
+            </View>
+          );
+        })}
+      </View>
+
+      <Text style={styles.habitStreak}>🔥 {streak}일 연속</Text>
+
+      {isDeadZone && <Text style={styles.habitDeadZoneHint}>곧 첫 슬롯이 열려요</Text>}
+    </View>
   );
 }
 
@@ -140,5 +218,53 @@ const styles = StyleSheet.create({
     marginTop: 24,
     color: '#c0392b',
     textAlign: 'center',
+  },
+  habitBanner: {
+    marginTop: 16,
+    alignItems: 'center',
+  },
+  habitGauge: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  habitDot: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  habitDotFilled: {
+    backgroundColor: '#fff1e6',
+  },
+  habitDotEmpty: {
+    backgroundColor: '#f2f2f2',
+  },
+  habitDotDeadZone: {
+    backgroundColor: '#eee',
+  },
+  habitDotActive: {
+    borderColor: '#ff8a34',
+  },
+  habitDotText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#ff8a34',
+  },
+  habitDotTextDeadZone: {
+    color: '#bbb',
+  },
+  habitStreak: {
+    marginTop: 6,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#666',
+  },
+  habitDeadZoneHint: {
+    marginTop: 4,
+    fontSize: 12,
+    color: '#999',
   },
 });

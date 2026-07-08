@@ -12,18 +12,22 @@
 
 import { useSyncExternalStore } from 'react';
 import { getUserDb } from './db';
+import { getSlotConfig, updateSlotConfig, type SlotWindow } from './habitQueries';
 
+export type { SlotWindow };
 export type DifficultyLevel = 1 | 2 | 3;
 
 interface SettingsState {
   level: DifficultyLevel;
   wordsPerDay: number;
+  slots: SlotWindow[];
   loaded: boolean;
 }
 
 let state: SettingsState = {
   level: 1,
   wordsPerDay: 20,
+  slots: [],
   loaded: false,
 };
 
@@ -44,9 +48,11 @@ export async function loadSettings(): Promise<void> {
   const row = await userDb.getFirstAsync<{ level: number; words_per_day: number }>(
     'SELECT level, words_per_day FROM settings WHERE id = 1',
   );
+  const slots = await getSlotConfig();
   setState({
     level: normalizeLevel(row?.level),
     wordsPerDay: row?.words_per_day ?? 20,
+    slots,
     loaded: true,
   });
 }
@@ -85,6 +91,23 @@ export async function setWordsPerDay(wordsPerDay: number): Promise<void> {
     await userDb.runAsync('UPDATE settings SET words_per_day = ? WHERE id = 1', [wordsPerDay]);
   } catch (err) {
     setState({ wordsPerDay: prev }); // 저장 실패 시 롤백
+    throw err;
+  }
+}
+
+/**
+ * 슬롯(인출 시간대 4구간) 변경 — updateSlotConfig가 검증(start<end, 겹침 금지,
+ * 0~24)까지 수행한다(habitQueries.ts 소유). 여기서는 낙관적 갱신 + 실패 시
+ * 롤백 패턴만 담당한다(setDifficultyLevel/setWordsPerDay와 동일 패턴).
+ * 실패 시 updateSlotConfig가 던진 한국어 메시지를 그대로 상위로 전파한다.
+ */
+export async function setSlots(slots: SlotWindow[]): Promise<void> {
+  const prev = state.slots;
+  setState({ slots }); // 즉시 반영(설정 화면 반응성)
+  try {
+    await updateSlotConfig(slots);
+  } catch (err) {
+    setState({ slots: prev }); // 저장 실패 시 롤백
     throw err;
   }
 }

@@ -30,9 +30,11 @@ import {
 } from '../../lib/incomeQueries';
 import {
   setDifficultyLevel,
+  setSlots,
   setWordsPerDay,
   useSettingsStore,
   type DifficultyLevel,
+  type SlotWindow,
 } from '../../lib/settings';
 
 const LEVEL_OPTIONS: { level: DifficultyLevel; label: string; hint: string }[] = [
@@ -95,6 +97,8 @@ export default function SettingsScreen() {
           {error && <Text style={styles.error}>{error}</Text>}
 
           <WordsPerDaySection />
+
+          <SlotConfigSection />
 
           <IncomeRulesSection />
         </View>
@@ -188,6 +192,126 @@ function WordsPerDaySection() {
 
       {rowError ? <Text style={styles.error}>{rowError}</Text> : null}
       {saved && <Text style={styles.savedText}>저장되었습니다.</Text>}
+    </View>
+  );
+}
+
+/**
+ * 인출 시간대 4구간(slot_config) 편집 섹션 (설계.md §7.3).
+ *
+ * TextInput 대신 스테퍼(+/- 버튼)로 시(hour)를 조정한다 — 이 화면은 키보드가
+ * 입력을 가리는 문제를 이미 한 번 고친 이력이 있어(git log), 애초에 키보드를
+ * 띄우지 않는 UI를 택한다. 검증 규칙(start<end, 겹침 금지, 0~24)은
+ * lib/habitQueries.ts의 updateSlotConfig가 이미 수행하므로 여기서 중복
+ * 구현하지 않는다 — 스테퍼는 0~24 범위 밖으로만 못 나가게 clamp한다.
+ *
+ * 슬롯당 한 행씩 두 스테퍼(시작/종료)를 보여주고, 각 스테퍼 변경 시 즉시
+ * settingsStore.setSlots()로 저장을 시도한다(다른 항목과 동일한 낙관적
+ * 갱신 + 실패 롤백 패턴 — 스토어 쪽에서 처리).
+ */
+function SlotConfigSection() {
+  const { slots, loaded } = useSettingsStore();
+  const [saving, setSaving] = useState(false);
+  const [sectionError, setSectionError] = useState('');
+
+  const handleChangeHour = useCallback(
+    async (slotIndex: number, field: 'startHour' | 'endHour', delta: number) => {
+      const current = slots.find((s) => s.slotIndex === slotIndex);
+      if (!current) return;
+
+      const nextValue = clampHour(current[field] + delta);
+      if (nextValue === current[field]) return; // 범위 끝에서는 변화 없음
+
+      const nextSlots: SlotWindow[] = slots.map((s) =>
+        s.slotIndex === slotIndex ? { ...s, [field]: nextValue } : s,
+      );
+
+      setSectionError('');
+      setSaving(true);
+      try {
+        await setSlots(nextSlots);
+      } catch (err) {
+        setSectionError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setSaving(false);
+      }
+    },
+    [slots],
+  );
+
+  return (
+    <View style={styles.incomeSection}>
+      <Text style={styles.sectionTitle}>인출 시간대 4구간</Text>
+      <Text style={styles.sectionDesc}>
+        하루를 4개 시간대로 나눠 그 안에서 한 번씩 단어장을 훑으면 게이지가 채워집니다.{'\n'}
+        각 구간은 시작보다 종료가 늦어야 하고, 서로 겹칠 수 없습니다.
+      </Text>
+
+      {!loaded && <Text style={styles.optionHint}>불러오는 중…</Text>}
+
+      <View style={styles.incomeRows}>
+        {slots.map((slot) => (
+          <View key={slot.slotIndex} style={styles.slotRow}>
+            <Text style={styles.incomeRowLabel}>{`구간 ${slot.slotIndex + 1}`}</Text>
+            <View style={styles.slotSteppers}>
+              <HourStepper
+                value={slot.startHour}
+                disabled={saving}
+                onDecrement={() => handleChangeHour(slot.slotIndex, 'startHour', -1)}
+                onIncrement={() => handleChangeHour(slot.slotIndex, 'startHour', 1)}
+              />
+              <Text style={styles.slotTilde}>~</Text>
+              <HourStepper
+                value={slot.endHour}
+                disabled={saving}
+                onDecrement={() => handleChangeHour(slot.slotIndex, 'endHour', -1)}
+                onIncrement={() => handleChangeHour(slot.slotIndex, 'endHour', 1)}
+              />
+            </View>
+          </View>
+        ))}
+      </View>
+
+      {sectionError ? <Text style={styles.error}>{sectionError}</Text> : null}
+    </View>
+  );
+}
+
+function clampHour(hour: number): number {
+  return Math.min(24, Math.max(0, hour));
+}
+
+/** hour(0~24) 값을 -/+ 버튼으로 조정하는 스테퍼. 키보드를 띄우지 않는다. */
+function HourStepper({
+  value,
+  disabled,
+  onDecrement,
+  onIncrement,
+}: {
+  value: number;
+  disabled: boolean;
+  onDecrement: () => void;
+  onIncrement: () => void;
+}) {
+  return (
+    <View style={styles.stepper}>
+      <Pressable
+        style={styles.stepperButton}
+        onPress={onDecrement}
+        disabled={disabled || value <= 0}
+        hitSlop={8}
+      >
+        <Text style={styles.stepperButtonText}>-</Text>
+      </Pressable>
+      <Text style={styles.stepperValue}>{String(value).padStart(2, '0')}시</Text>
+      <Pressable
+        style={styles.stepperButton}
+        onPress={onIncrement}
+        disabled={disabled || value >= 24}
+        hitSlop={8}
+      >
+        <Text style={styles.stepperButtonText}>+</Text>
+      </Pressable>
     </View>
   );
 }
@@ -403,6 +527,51 @@ const styles = StyleSheet.create({
   incomeWon: {
     fontSize: 14,
     color: '#666',
+  },
+  slotRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  slotSteppers: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  slotTilde: {
+    fontSize: 14,
+    color: '#888',
+  },
+  stepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  stepperButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepperButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#333',
+  },
+  stepperValue: {
+    minWidth: 44,
+    textAlign: 'center',
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
   },
   savedText: {
     marginTop: 12,
