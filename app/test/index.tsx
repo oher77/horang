@@ -22,7 +22,7 @@
 
 import { Stack, router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import ScoreRevealAnimation from '../../components/test/ScoreRevealAnimation';
 import TestRow, { ROW_MIN_HEIGHT } from '../../components/test/TestRow';
@@ -54,6 +54,15 @@ export default function TestScreen() {
   const dayIdRef = useRef<number | null>(null);
   const sessionIdRef = useRef<number | undefined>(undefined);
 
+  // grading phase 답 입력칸 return 키 → 다음 칸 포커스 이동용 refs.
+  // index 기준으로 캐싱해 매 렌더 새 함수를 만들지 않고(= TestRow의 memo 유지) 참조를 안정적으로 유지한다.
+  const flatListRef = useRef<FlatList<TestQuestion>>(null);
+  const inputRefsRef = useRef<Map<number, TextInput>>(new Map());
+  const inputRefCallbacksRef = useRef<Map<number, (el: TextInput | null) => void>>(new Map());
+  const submitHandlersRef = useRef<Map<number, () => void>>(new Map());
+  const lastIndexRef = useRef(-1);
+  const pendingFocusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const load = useCallback(() => {
     setState('loading');
     setError(null);
@@ -79,6 +88,81 @@ export default function TestScreen() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    lastIndexRef.current = questions.length - 1;
+  }, [questions.length]);
+
+  useEffect(() => {
+    return () => {
+      if (pendingFocusTimeoutRef.current) {
+        clearTimeout(pendingFocusTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // 지정한 index의 답 입력칸에 포커스. windowSize=5 덕에 인접 행은 거의 항상
+  // 마운트돼 있어 ref가 바로 잡히지만, 드물게 미마운트인 경우 scrollToIndex로
+  // 화면에 올린 뒤 짧은 지연 후 다시 시도하는 폴백을 둔다.
+  const focusInputAt = useCallback((index: number) => {
+    const existing = inputRefsRef.current.get(index);
+    if (existing) {
+      existing.focus();
+      return;
+    }
+
+    flatListRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0.5 });
+
+    if (pendingFocusTimeoutRef.current) {
+      clearTimeout(pendingFocusTimeoutRef.current);
+    }
+    pendingFocusTimeoutRef.current = setTimeout(() => {
+      pendingFocusTimeoutRef.current = null;
+      inputRefsRef.current.get(index)?.focus();
+    }, 120);
+  }, []);
+
+  // return 키 제출 시: 마지막 문제가 아니면 다음 칸으로 포커스 이동, 마지막이면
+  // 아무것도 하지 않고 TextInput 기본 동작(blurAndSubmit)에 맡겨 키보드가 내려가게 둔다.
+  const handleSubmitEditingAt = useCallback(
+    (index: number) => {
+      if (index >= lastIndexRef.current) {
+        return;
+      }
+      focusInputAt(index + 1);
+    },
+    [focusInputAt],
+  );
+
+  // index별로 onSubmitEditing 핸들러를 캐싱해 renderItem이 다시 호출돼도
+  // 같은 index에는 항상 동일한 함수 참조를 반환한다(TestRow memo 무력화 방지).
+  const getSubmitHandler = useCallback(
+    (index: number) => {
+      let handler = submitHandlersRef.current.get(index);
+      if (!handler) {
+        handler = () => handleSubmitEditingAt(index);
+        submitHandlersRef.current.set(index, handler);
+      }
+      return handler;
+    },
+    [handleSubmitEditingAt],
+  );
+
+  // index별 TextInput ref 콜백도 동일하게 캐싱한다.
+  const registerInputRef = useCallback((index: number) => {
+    let cb = inputRefCallbacksRef.current.get(index);
+    if (!cb) {
+      cb = (el: TextInput | null) => {
+        if (el) {
+          inputRefsRef.current.set(index, el);
+        } else {
+          inputRefsRef.current.delete(index);
+        }
+      };
+      inputRefCallbacksRef.current.set(index, cb);
+    }
+    return cb;
+  }, []);
 
   const handleChangeAnswer = useCallback((wordId: number, text: string) => {
     setAnswers((prev) => ({ ...prev, [wordId]: text }));
@@ -154,8 +238,10 @@ export default function TestScreen() {
   const renderItem = useCallback(
     ({ item, index }: { item: TestQuestion; index: number }) => {
       const wordId = item.content_word_id;
+      const isLast = index === questions.length - 1;
       return (
         <TestRow
+          ref={registerInputRef(index)}
           index={index}
           question={item}
           graded={phase !== 'grading'}
@@ -165,10 +251,23 @@ export default function TestScreen() {
           onChangeAnswer={(text) => handleChangeAnswer(wordId, text)}
           onToggleWrong={() => handleToggleWrong(wordId)}
           onTogglePronConfused={() => handleTogglePronConfused(wordId)}
+          returnKeyType={isLast ? 'done' : 'next'}
+          submitBehavior={isLast ? undefined : 'submit'}
+          onSubmitEditing={getSubmitHandler(index)}
         />
       );
     },
-    [phase, answers, grades, handleChangeAnswer, handleToggleWrong, handleTogglePronConfused],
+    [
+      phase,
+      answers,
+      grades,
+      questions.length,
+      handleChangeAnswer,
+      handleToggleWrong,
+      handleTogglePronConfused,
+      registerInputRef,
+      getSubmitHandler,
+    ],
   );
 
   const keyExtractor = useCallback((item: TestQuestion) => String(item.content_word_id), []);
@@ -260,6 +359,7 @@ export default function TestScreen() {
             보이는 15~20행만 렌더. 채점 컬럼이 늘어도 행높이는 ROW_MIN_HEIGHT로 고정.
           */}
           <FlatList
+            ref={flatListRef}
             data={questions}
             keyExtractor={keyExtractor}
             renderItem={renderItem}
@@ -269,6 +369,7 @@ export default function TestScreen() {
             maxToRenderPerBatch={8}
             removeClippedSubviews
             keyboardShouldPersistTaps="handled"
+            automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
           />
 
           <View style={styles.footer}>

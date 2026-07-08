@@ -10,8 +10,8 @@
  */
 
 import * as Speech from 'expo-speech';
-import { memo } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { forwardRef, memo, type ForwardedRef } from 'react';
+import { Pressable, StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
 
 import type { TestQuestion } from '../../lib/reviewQueries';
 import { kindLabel, questionAnswer, questionPrompt, ttsWord } from './testQuestionText';
@@ -28,19 +28,30 @@ interface TestRowProps {
   onChangeAnswer: (text: string) => void;
   onToggleWrong: () => void;
   onTogglePronConfused: () => void;
+  // grading phase 답 입력칸의 return 키 동작(다음 칸으로 포커스 이동) 제어용.
+  // graded 이후(TextInput 미렌더)에는 전달되지 않는다.
+  returnKeyType?: TextInputProps['returnKeyType'];
+  submitBehavior?: TextInputProps['submitBehavior'];
+  onSubmitEditing?: () => void;
 }
 
-function TestRowImpl({
-  index,
-  question,
-  graded,
-  userAnswer,
-  isWrong,
-  pronConfused,
-  onChangeAnswer,
-  onToggleWrong,
-  onTogglePronConfused,
-}: TestRowProps) {
+function TestRowImpl(
+  {
+    index,
+    question,
+    graded,
+    userAnswer,
+    isWrong,
+    pronConfused,
+    onChangeAnswer,
+    onToggleWrong,
+    onTogglePronConfused,
+    returnKeyType,
+    submitBehavior,
+    onSubmitEditing,
+  }: TestRowProps,
+  ref: ForwardedRef<TextInput>,
+) {
   const handleSpeak = () => {
     Speech.stop();
     Speech.speak(ttsWord(question), { language: 'en-US' });
@@ -60,6 +71,7 @@ function TestRowImpl({
       {!graded && (
         <View style={styles.answerCell}>
           <TextInput
+            ref={ref}
             style={styles.answerInput}
             value={userAnswer}
             onChangeText={onChangeAnswer}
@@ -67,6 +79,9 @@ function TestRowImpl({
             placeholderTextColor="#bbb"
             autoCapitalize="none"
             autoCorrect={false}
+            returnKeyType={returnKeyType}
+            submitBehavior={submitBehavior}
+            onSubmitEditing={onSubmitEditing}
           />
         </View>
       )}
@@ -220,4 +235,7 @@ const styles = StyleSheet.create({
   },
 });
 
-export default memo(TestRowImpl);
+const TestRow = forwardRef(TestRowImpl);
+TestRow.displayName = 'TestRow';
+
+export default memo(TestRow);
