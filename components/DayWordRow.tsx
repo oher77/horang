@@ -18,7 +18,6 @@ import Animated, {
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
-  withSpring,
   withTiming,
 } from 'react-native-reanimated';
 
@@ -29,6 +28,10 @@ import type { DayWordRow as DayWordRowData } from '../lib/queries';
 export const ROW_HEIGHT = 56;
 
 const SWIPE_THRESHOLD = 56;
+// 스와이프 중 행이 실제로 밀리는 시각적 상한 — 단계 뱃지 셀 폭만큼만 (사용자 피드백:
+// 손가락을 그대로 따라가면 이동 폭이 너무 큼). 제스처 판정(SWIPE_THRESHOLD)은 원본
+// translationX 기준이라 영향 없음.
+const MAX_ROW_SHIFT = 28;
 
 interface DayWordRowProps {
   item: DayWordRowData;
@@ -79,7 +82,7 @@ function DayWordRowImpl({
     .activeOffsetX([-12, 12])
     .failOffsetY([-14, 14])
     .onUpdate((e) => {
-      translateX.value = e.translationX;
+      translateX.value = Math.max(-MAX_ROW_SHIFT, Math.min(MAX_ROW_SHIFT, e.translationX));
     })
     .onEnd((e) => {
       if (e.translationX > SWIPE_THRESHOLD) {
@@ -87,7 +90,8 @@ function DayWordRowImpl({
       } else if (e.translationX < -SWIPE_THRESHOLD) {
         runOnJS(handleSwipeStage)(-1); // 좌스와이프 = 단계 감소
       }
-      translateX.value = withSpring(0, { damping: 18, stiffness: 220 });
+      // 반동(출렁임) 없는 복귀 — 사용자 피드백으로 spring에서 timing으로 교체
+      translateX.value = withTiming(0, { duration: 140 });
     });
 
   const rowAnimatedStyle = useAnimatedStyle(() => ({
@@ -95,7 +99,8 @@ function DayWordRowImpl({
   }));
 
   const swipeHintStyle = useAnimatedStyle(() => ({
-    opacity: withTiming(Math.min(Math.abs(translateX.value) / SWIPE_THRESHOLD, 1), {
+    // 시각 이동이 MAX_ROW_SHIFT로 제한되므로 힌트 게이지도 같은 기준으로 채운다
+    opacity: withTiming(Math.min(Math.abs(translateX.value) / MAX_ROW_SHIFT, 1), {
       duration: 80,
     }),
   }));

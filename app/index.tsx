@@ -1,4 +1,4 @@
-import { router } from 'expo-router';
+import { router, Stack } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
@@ -26,6 +26,7 @@ export default function Index() {
 
   return (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.container}>
+      <Stack.Screen options={{ title: 'horang english' }} />
       <Text style={styles.title}>호랑이 잉글리시</Text>
       <Text style={styles.date}>{today}</Text>
 
@@ -40,7 +41,12 @@ export default function Index() {
 
           <Pressable
             style={styles.button}
-            onPress={() => router.push({ pathname: '/day/[dayId]', params: { dayId: String(day.id) } })}
+            onPress={() =>
+              router.push({
+                pathname: '/day/[dayId]',
+                params: { dayId: String(day.id), dayIndex: String(day.day_index) },
+              })
+            }
           >
             <Text style={styles.buttonText}>오늘의 단어장 시작하기</Text>
           </Pressable>

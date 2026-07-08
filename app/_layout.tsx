@@ -51,7 +51,8 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={styles.root}>
-      <Stack />
+      {/* headerBackButtonDisplayMode: 뒤로가기에서 이전 화면 이름 텍스트를 빼고 < 화살표만 */}
+      <Stack screenOptions={{ headerBackButtonDisplayMode: 'minimal' }} />
     </GestureHandlerRootView>
   );
 }

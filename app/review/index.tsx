@@ -54,7 +54,10 @@ export default function ReviewScreen() {
             <Pressable
               style={styles.card}
               onPress={() =>
-                router.push({ pathname: '/day/[dayId]', params: { dayId: String(item.id) } })
+                router.push({
+                  pathname: '/day/[dayId]',
+                  params: { dayId: String(item.id), dayIndex: String(item.day_index) },
+                })
               }
             >
               <View style={styles.cardHeader}>

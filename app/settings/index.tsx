@@ -28,7 +28,12 @@ import {
   updateIncomeRuleAmount,
   type IncomeRule,
 } from '../../lib/incomeQueries';
-import { setDifficultyLevel, useSettingsStore, type DifficultyLevel } from '../../lib/settings';
+import {
+  setDifficultyLevel,
+  setWordsPerDay,
+  useSettingsStore,
+  type DifficultyLevel,
+} from '../../lib/settings';
 
 const LEVEL_OPTIONS: { level: DifficultyLevel; label: string; hint: string }[] = [
   { level: 1, label: '고1', hint: '짧고 평이한 예문' },
@@ -89,10 +94,101 @@ export default function SettingsScreen() {
 
           {error && <Text style={styles.error}>{error}</Text>}
 
+          <WordsPerDaySection />
+
           <IncomeRulesSection />
         </View>
       </TouchableWithoutFeedback>
     </ScrollView>
+  );
+}
+
+/**
+ * 하루 단어 수(settings.words_per_day) 편집 섹션.
+ * IncomeRulesSection과 동일한 TextInput(number-pad)+onBlur 즉시저장 패턴이나,
+ * 값 자체가 이미 settingsStore(useSettingsStore)에 있으므로 화면 로컬로 다시
+ * fetch하지 않고 스토어를 직접 구독한다(income_rule은 스토어에 없는 값이라 로컬 fetch).
+ */
+function WordsPerDaySection() {
+  const { wordsPerDay, loaded } = useSettingsStore();
+  const [draft, setDraft] = useState('');
+  const [draftInitialized, setDraftInitialized] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [rowError, setRowError] = useState('');
+
+  // 스토어 로드가 끝나면 draft 초기값을 1회 채운다(이후 사용자 입력을 덮어쓰지 않음).
+  useEffect(() => {
+    if (loaded && !draftInitialized) {
+      setDraft(String(wordsPerDay));
+      setDraftInitialized(true);
+    }
+  }, [loaded, draftInitialized, wordsPerDay]);
+
+  const handleChangeText = useCallback((text: string) => {
+    // 숫자만 허용(음수/소수점 입력 자체를 막아 즉시 피드백)
+    const digitsOnly = text.replace(/[^0-9]/g, '');
+    setDraft(digitsOnly);
+    setSaved(false);
+  }, []);
+
+  const handleBlur = useCallback(async () => {
+    setRowError('');
+
+    if (draft === '') {
+      // 빈 입력은 저장하지 않고 이전 값으로 되돌린다.
+      setDraft(String(wordsPerDay));
+      return;
+    }
+
+    const next = Number(draft);
+    if (!Number.isInteger(next) || next < 1 || next > 200) {
+      setRowError('1~200 사이의 숫자만 입력하세요.');
+      setDraft(String(wordsPerDay));
+      return;
+    }
+
+    if (next === wordsPerDay) return; // 변경 없음
+
+    setSaving(true);
+    try {
+      await setWordsPerDay(next);
+      setSaved(true);
+    } catch (err) {
+      setRowError(err instanceof Error ? err.message : String(err));
+      setDraft(String(wordsPerDay));
+    } finally {
+      setSaving(false);
+    }
+  }, [draft, wordsPerDay]);
+
+  return (
+    <View style={styles.incomeSection}>
+      <Text style={styles.sectionTitle}>하루 단어 수</Text>
+      <Text style={styles.sectionDesc}>
+        하루에 새로 배울 단어 개수를 설정하세요.{'\n'}
+        이미 공부를 시작한 단어장은 바뀌지 않습니다.
+      </Text>
+
+      <View style={styles.incomeRow}>
+        <Text style={styles.incomeRowLabel}>하루 단어 수</Text>
+        <View style={styles.incomeInputWrap}>
+          <TextInput
+            style={styles.incomeInput}
+            keyboardType="number-pad"
+            value={draft}
+            onChangeText={handleChangeText}
+            onBlur={handleBlur}
+            editable={!saving}
+            maxLength={3}
+          />
+          <Text style={styles.incomeWon}>개</Text>
+        </View>
+      </View>
+
+      {rowError ? <Text style={styles.error}>{rowError}</Text> : null}
+      {saved && <Text style={styles.savedText}>저장되었습니다.</Text>}
+    </View>
   );
 }
 

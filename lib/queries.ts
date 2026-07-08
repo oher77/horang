@@ -56,7 +56,7 @@ export async function ensureTodayDay(): Promise<DayWithWords> {
   const userDb = getUserDb();
   const today = todayEpochDay();
 
-  const existing = await userDb.getFirstAsync<{
+  let existing = await userDb.getFirstAsync<{
     id: number;
     day_index: number;
     created_day: number;
@@ -65,10 +65,41 @@ export async function ensureTodayDay(): Promise<DayWithWords> {
     words_count: number;
   }>('SELECT id, day_index, created_day, created_ms, is_started, words_count FROM day WHERE created_day = ? LIMIT 1', [today]);
 
+  // 설계.md §4.5: words_per_day 변경 시 "아직 시작하지 않은" 오늘 Day는 삭제 후
+  // 새 개수로 재생성한다. 안전 조건 — ① is_started=0 (단어장 화면을 연 적 없음)
+  // ② 이 Day를 참조하는 test_session이 없음 (테스트 기록 보존). 조건을 하나라도
+  // 어기면 재생성하지 않는다 (학습 이력 불변 원칙).
+  if (existing && existing.is_started === 0) {
+    const wordsPerDay = await getWordsPerDay();
+    if (existing.words_count !== wordsPerDay) {
+      const tested = await userDb.getFirstAsync<{ cnt: number }>(
+        'SELECT COUNT(*) AS cnt FROM test_session WHERE day_id = ?',
+        [existing.id],
+      );
+      if ((tested?.cnt ?? 0) === 0) {
+        const staleId = existing.id;
+        await userDb.withTransactionAsync(async () => {
+          await userDb.runAsync('DELETE FROM day_word WHERE day_id = ?', [staleId]);
+          await userDb.runAsync('DELETE FROM day WHERE id = ?', [staleId]);
+        });
+        existing = null;
+      }
+    }
+  }
+
   const day = existing ?? (await createTodayDay(today));
   const words = await getDayWords(day.id);
 
   return { ...day, words };
+}
+
+/**
+ * 단어장 화면을 열었을 때 호출 — is_started=1 기록. 이후 words_per_day를 바꿔도
+ * 이 Day는 재생성 대상에서 제외된다 (오늘의 학습 흔적 보호).
+ */
+export async function markDayStarted(dayId: number): Promise<void> {
+  const userDb = getUserDb();
+  await userDb.runAsync('UPDATE day SET is_started = 1 WHERE id = ? AND is_started = 0', [dayId]);
 }
 
 /** 새 Day를 생성한다. 미사용 단어 풀에서 랜덤 N개를 뽑아 day_word에 배정한다. */
@@ -141,6 +172,16 @@ async function createTodayDay(today: number): Promise<{
     is_started: 0,
     words_count: selected.length,
   };
+}
+
+/** dayId로 day_index를 조회한다 (화면 타이틀 "Day{n}" 표시용). 없으면 null. */
+export async function getDayIndex(dayId: number): Promise<number | null> {
+  const userDb = getUserDb();
+  const row = await userDb.getFirstAsync<{ day_index: number }>(
+    'SELECT day_index FROM day WHERE id = ?',
+    [dayId],
+  );
+  return row ? row.day_index : null;
 }
 
 /** 특정 Day의 단어 목록을 position 순으로, content.db의 headword/대표 뜻과 조인해 반환한다. */

@@ -5,7 +5,12 @@ import type { ViewToken } from 'react-native';
 
 import DayWordRow, { ROW_HEIGHT } from '../../components/DayWordRow';
 import WordDetailSheet from '../../components/WordDetailSheet';
-import { getDayWords, type DayWordRow as DayWordRowData } from '../../lib/queries';
+import {
+  getDayIndex,
+  getDayWords,
+  markDayStarted,
+  type DayWordRow as DayWordRowData,
+} from '../../lib/queries';
 import { useSettingsStore } from '../../lib/settings';
 import { adjustRecallStage } from '../../lib/study';
 import { getWordDetail, type WordDetail } from '../../lib/wordDetail';
@@ -18,8 +23,18 @@ const PEEK_DURATION_MS = 1400;
 type ColumnKey = 'word' | 'meaning';
 
 export default function DayScreen() {
-  const { dayId } = useLocalSearchParams<{ dayId: string }>();
+  const { dayId, dayIndex: dayIndexParam } = useLocalSearchParams<{
+    dayId: string;
+    dayIndex?: string;
+  }>();
   const [words, setWords] = useState<DayWordRowData[] | null>(null);
+  // 호출측(홈/복습)이 이미 아는 Day 번호를 param으로 넘겨주면 첫 프레임부터 제 타이틀로
+  // 시작한다 (DB 조회 대기 중 대체 타이틀이 깜빡이는 것 방지). param 없이 열린 경우만
+  // DB에서 조회.
+  const [dayIndex, setDayIndex] = useState<number | null>(() => {
+    const n = Number(dayIndexParam);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  });
   const [error, setError] = useState<string | null>(null);
   const { level } = useSettingsStore();
 
@@ -52,6 +67,16 @@ export default function DayScreen() {
     getDayWords(id)
       .then(setWords)
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+    // 단어장을 연 순간 "시작됨" 기록 — 이후 하루 단어 수 설정을 바꿔도 이 Day는 유지됨
+    markDayStarted(id).catch(() => {});
+    if (dayIndex === null) {
+      getDayIndex(id)
+        .then(setDayIndex)
+        .catch(() => {
+          // 타이틀 표시용이라 실패해도 화면 동작에는 지장 없음 — 기본 타이틀 유지
+        });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dayId]);
 
   useEffect(() => {
@@ -171,7 +196,7 @@ export default function DayScreen() {
 
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: '오늘의 단어장' }} />
+      <Stack.Screen options={{ title: dayIndex !== null ? `Day${dayIndex}` : '단어장' }} />
 
       {error && <Text style={styles.error}>{error}</Text>}
 
