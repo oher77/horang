@@ -11,7 +11,17 @@
 
 import { Stack } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  Keyboard,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableWithoutFeedback,
+  View,
+} from 'react-native';
 
 import {
   getIncomeRules,
@@ -45,35 +55,44 @@ export default function SettingsScreen() {
   }, [level]);
 
   return (
-    <View style={styles.container}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.contentContainer}
+      keyboardShouldPersistTaps="handled"
+      automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+    >
       <Stack.Screen options={{ title: '설정' }} />
 
-      <Text style={styles.sectionTitle}>난이도</Text>
-      <Text style={styles.sectionDesc}>단어장 예문의 난이도를 선택하세요. 뜻은 난이도와 무관하게 항상 전부 표시됩니다.</Text>
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+        <View>
+          <Text style={styles.sectionTitle}>난이도</Text>
+          <Text style={styles.sectionDesc}>단어장 예문의 난이도를 선택하세요. 뜻은 난이도와 무관하게 항상 전부 표시됩니다.</Text>
 
-      <View style={styles.options}>
-        {LEVEL_OPTIONS.map((opt) => {
-          const selected = loaded && level === opt.level;
-          return (
-            <Pressable
-              key={opt.level}
-              style={[styles.optionCard, selected && styles.optionCardSelected]}
-              onPress={() => handleSelect(opt.level)}
-              disabled={saving}
-              hitSlop={8}
-            >
-              <Text style={[styles.optionLabel, selected && styles.optionLabelSelected]}>{opt.label}</Text>
-              <Text style={styles.optionHint}>{opt.hint}</Text>
-              {selected && <Text style={styles.selectedMark}>선택됨</Text>}
-            </Pressable>
-          );
-        })}
-      </View>
+          <View style={styles.options}>
+            {LEVEL_OPTIONS.map((opt) => {
+              const selected = loaded && level === opt.level;
+              return (
+                <Pressable
+                  key={opt.level}
+                  style={[styles.optionCard, selected && styles.optionCardSelected]}
+                  onPress={() => handleSelect(opt.level)}
+                  disabled={saving}
+                  hitSlop={8}
+                >
+                  <Text style={[styles.optionLabel, selected && styles.optionLabelSelected]}>{opt.label}</Text>
+                  <Text style={styles.optionHint}>{opt.hint}</Text>
+                  {selected && <Text style={styles.selectedMark}>선택됨</Text>}
+                </Pressable>
+              );
+            })}
+          </View>
 
-      {error && <Text style={styles.error}>{error}</Text>}
+          {error && <Text style={styles.error}>{error}</Text>}
 
-      <IncomeRulesSection />
-    </View>
+          <IncomeRulesSection />
+        </View>
+      </TouchableWithoutFeedback>
+    </ScrollView>
   );
 }
 
@@ -193,6 +212,8 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#fff',
+  },
+  contentContainer: {
     padding: 20,
   },
   sectionTitle: {
