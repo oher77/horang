@@ -2,6 +2,7 @@ import { Stack, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { ViewToken } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import DayWordRow, { ROW_HEIGHT } from '../../components/DayWordRow';
 import WordDetailSheet from '../../components/WordDetailSheet';
@@ -37,6 +38,7 @@ export default function DayScreen() {
   });
   const [error, setError] = useState<string | null>(null);
   const { level } = useSettingsStore();
+  const insets = useSafeAreaInsets();
 
   // 예문 바텀시트 상태 (사용자 확정 UX: 가려지지 않은 행 탭 → 상세 시트)
   const [sheetVisible, setSheetVisible] = useState(false);
@@ -232,6 +234,10 @@ export default function DayScreen() {
             keyExtractor={keyExtractor}
             renderItem={renderItem}
             getItemLayout={getItemLayout}
+            // 마지막 행이 홈 인디케이터에 붙으면 스와이프가 시스템 제스처와 겹쳐 어려움 —
+            // 하단 여백으로 끝까지 스크롤 시 마지막 행이 한 행 높이만큼 떠 있게 한다.
+            // (하단 padding은 getItemLayout offset 계산에 영향 없음)
+            contentContainerStyle={{ paddingBottom: insets.bottom + ROW_HEIGHT }}
             initialNumToRender={18}
             windowSize={5}
             maxToRenderPerBatch={8}
