@@ -235,7 +235,6 @@ export default function DayScreen() {
             initialNumToRender={18}
             windowSize={5}
             maxToRenderPerBatch={8}
-            removeClippedSubviews
             onViewableItemsChanged={onViewableItemsChanged}
             viewabilityConfig={viewabilityConfig}
           />

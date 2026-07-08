@@ -17,6 +17,7 @@ import { Stack } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, FlatList, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { runOnJS } from 'react-native-reanimated';
 
 import { epochDayToDateString, toEpochDay } from '../../lib/dates';
 import { getPronunciationConfusedWords, type PronunciationConfusedWord } from '../../lib/statsQueries';
@@ -88,7 +89,8 @@ function PronunciationRowImpl({ item }: { item: PronunciationConfusedWord }) {
   }, [item.headword]);
 
   const tapGesture = Gesture.Tap().onEnd(() => {
-    handleSpeak();
+    // 제스처 콜백은 UI 스레드(worklet)에서 실행됨 — JS 함수는 runOnJS 경유 필수 (직접 호출 시 크래시)
+    runOnJS(handleSpeak)();
   });
 
   return (
