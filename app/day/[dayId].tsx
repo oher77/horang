@@ -1,9 +1,18 @@
 import { Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { AppStateStatus, ViewToken } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import Animated, {
+  cancelAnimation,
+  Easing,
+  FadeIn,
+  FadeOut,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+  type SharedValue,
+} from 'react-native-reanimated';
 
 import DayWordRow, { ROW_HEIGHT } from '../../components/DayWordRow';
 import WordDetailSheet from '../../components/WordDetailSheet';
@@ -30,12 +39,16 @@ import { getWordDetail, type WordDetail } from '../../lib/wordDetail';
 const STAGGER_MS = 15;
 const PEEK_DURATION_MS = 1400;
 
-// 하루 4회 분산 인출 습관 시스템 — 세션 트래킹 상수 (설계.md §7.1, §7.3)
-const MIN_DWELL_MS = 150_000; // 최소 체류 150초(모든 세션 공통)
-const COVERAGE_RATIO = 0.7; // 첫 세션에만 적용되는 커버리지 임계
+// 하루 4회 분산 인출 습관 시스템 — 세션 트래킹 상수 (설계.md §7.1, §7.3, 2026-07-09 기준 교체)
+const DWELL_MS_PER_WORD = 1000; // 오늘 첫 세션 임계: 단어수 × 1초
+const LATER_SESSION_BASE_MS = 3000; // 이후 세션 임계 기본값: 3초 + 배지수×1초
 const BANNER_DURATION_MS = 2000; // 완료 피드백 배너 표시 시간
 
+// 인출모드 카운트다운 라인바 상수 (설계.md §7.3)
+const COUNTDOWN_MS_PER_WORD = 5000; // 단어수 × 5초
+
 type ColumnKey = 'word' | 'meaning';
+type StudyMode = 'study' | 'retrieval';
 
 export default function DayScreen() {
   const { dayId, dayIndex: dayIndexParam } = useLocalSearchParams<{
@@ -66,6 +79,12 @@ export default function DayScreen() {
     meaning: false,
   });
 
+  // 학습/인출모드 토글 — 기본 학습모드. 인출모드 진입 시 뜻 컬럼을 일괄 가림(설계.md §4.5, §7.3).
+  // 이후 눈 아이콘 수동 조작은 모드와 독립(단방향 세팅).
+  const [mode, setMode] = useState<StudyMode>('study');
+  // 인출모드 카운트다운 라인바 진행도 (1=가득 참 → 0=소진). mode==='retrieval'일 때만 렌더.
+  const lineBarProgress = useSharedValue(0);
+
   // 개별 셀 "잠깐 보이기" — dayWordId별로 컬럼 peek 타이머 관리
   const [peekMap, setPeekMap] = useState<Record<number, Partial<Record<ColumnKey, boolean>>>>({});
   const peekTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
@@ -77,19 +96,19 @@ export default function DayScreen() {
   // --- 하루 4회 분산 인출 습관 시스템 — 세션 트래킹 (설계.md §7.1, §7.3) ---
   // 트래킹 적용 여부: 오늘 Day가 아니거나 진입 시점이 데드존(슬롯 없음)이면 비활성.
   const [trackingEnabled, setTrackingEnabled] = useState(false);
-  const [isFirstSession, setIsFirstSession] = useState(false);
-  const [wordsRequiredForCoverage, setWordsRequiredForCoverage] = useState(0);
-  const coveredWordIdsRef = useRef<Set<number>>(new Set());
-  const [coveredCount, setCoveredCount] = useState(0);
   const [sessionRecorded, setSessionRecorded] = useState(false);
-  // 첫 세션 진행 표시("이번 인출 X/N")와 달리 이후 세션은 남은 체류 시간(초)을 보여준다.
-  const [dwellRemainingSec, setDwellRemainingSec] = useState<number | null>(null);
   const [completionBanner, setCompletionBanner] = useState<string | null>(null);
 
+  // 트래킹 초기화 1회 가드 — 초기화 성공 후에는 words 변경(스와이프에 의한 setWords)이
+  // 발생해도 임계값 재계산이 다시 일어나지 않는다("세션 중 임계 고정" 스펙의 필수 전제이자,
+  // 기존에 스와이프마다 쿼리 4개가 재실행되던 잠복 문제의 수정).
+  const trackingInitializedRef = useRef(false);
+
   // 체류 타이머 상태 — "남은 시간만큼 setTimeout + 일시정지 시 잔여시간 보존" 방식.
-  const dwellRemainingMsRef = useRef(MIN_DWELL_MS);
+  // 초기값 0: 트래킹 초기화 effect가 실제 임계값을 계산해 넣기 전까지는 resumeDwellTimer의
+  // `<= 0` 가드가 타이머 오시작을 막는 안전망.
+  const dwellRemainingMsRef = useRef(0);
   const dwellTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const dwellIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const dwellRunningSinceRef = useRef<number | null>(null); // 현재 구간 시작 epoch ms (null = 정지 중)
   const dwellSatisfiedRef = useRef(false);
   const screenFocusedRef = useRef(true);
@@ -117,23 +136,36 @@ export default function DayScreen() {
   }, [dayId]);
 
   // 세션 트래킹 초기화 — 오늘 Day + 데드존 아님(currentSlotIndex != null) 확인 후에만 활성화.
-  // words가 로드돼야 커버리지 임계(ceil(N*0.7))를 계산할 수 있으므로 words 로드와 별도 effect.
+  // words가 로드돼야 체류 임계값(단어수 기반)을 계산할 수 있으므로 words 로드와 별도 effect.
+  // trackingInitializedRef 가드로 초기화는 세션당 정확히 1회만 수행된다(위 ref 선언부 주석 참고).
   useEffect(() => {
     const id = Number(dayId);
     if (!Number.isFinite(id) || !words) return;
+    if (trackingInitializedRef.current) return;
 
     let cancelled = false;
     Promise.all([isTodayDay(id), isFirstSessionOfToday(), currentSlotIndex(), getTodaySlots()]).then(
       ([todayDay, firstSession, slotIndex, todaySlots]) => {
         if (cancelled) return;
         if (!todayDay || slotIndex === null) {
-          // 오늘 Day가 아니거나 데드존 — 트래킹도 인디케이터도 시작하지 않는다.
+          // 오늘 Day가 아니거나 데드존 — 트래킹을 시작하지 않는다(다음 words 변경 시 재시도 가능).
           return;
         }
-        setIsFirstSession(firstSession);
-        setWordsRequiredForCoverage(Math.ceil(words.length * COVERAGE_RATIO));
+        trackingInitializedRef.current = true;
+
+        // 미션 임계값(체류 단독, 2026-07-09 확정 — 설계.md §7.1): 오늘 첫 세션은 단어수×1초,
+        // 이후 세션은 3초 + (스와이프 배지 단어수)×1초. 배지 수는 이 시점(화면 로드) 1회 계산해
+        // 세션 중 스와이프해도 임계는 고정된다.
+        const badgeWordCount = words.filter((w) => w.recall_stage > 0).length;
+        dwellRemainingMsRef.current = Math.max(
+          1000,
+          firstSession
+            ? words.length * DWELL_MS_PER_WORD
+            : LATER_SESSION_BASE_MS + badgeWordCount * 1000,
+        );
+
         if (todaySlots[slotIndex]) {
-          // 현재 슬롯이 이미 확정됨 — 판정 시도 없이 인디케이터도 숨긴다(recordRetrievalSession의
+          // 현재 슬롯이 이미 확정됨 — 판정 시도 없이 조용히 잠근다(recordRetrievalSession의
           // INSERT OR IGNORE도 결국 무시하지만, 헛되이 타이머를 돌릴 필요가 없어 미리 잠근다).
           setSessionRecorded(true);
         }
@@ -163,7 +195,6 @@ export default function DayScreen() {
   const tryFinalizeSession = useCallback(() => {
     if (!trackingEnabled || sessionRecorded) return;
     if (!dwellSatisfiedRef.current) return;
-    if (isFirstSession && coveredWordIdsRef.current.size < wordsRequiredForCoverage) return;
     if (!Number.isFinite(dayIdNum)) return;
 
     // 조건 충족 순간 즉시 잠가 중복 호출 방지 (DB round-trip 중 재진입 방지)
@@ -187,7 +218,7 @@ export default function DayScreen() {
       .catch(() => {
         // 습관 트래킹은 부가 기능 — 실패해도 학습 흐름을 막지 않는다.
       });
-  }, [trackingEnabled, sessionRecorded, isFirstSession, wordsRequiredForCoverage, dayIdNum]);
+  }, [trackingEnabled, sessionRecorded, dayIdNum]);
 
   const tryFinalizeRef = useRef(tryFinalizeSession);
   tryFinalizeRef.current = tryFinalizeSession;
@@ -197,10 +228,6 @@ export default function DayScreen() {
     if (dwellTimerRef.current) {
       clearTimeout(dwellTimerRef.current);
       dwellTimerRef.current = null;
-    }
-    if (dwellIntervalRef.current) {
-      clearInterval(dwellIntervalRef.current);
-      dwellIntervalRef.current = null;
     }
     if (dwellRunningSinceRef.current !== null) {
       const elapsed = Date.now() - dwellRunningSinceRef.current;
@@ -220,23 +247,13 @@ export default function DayScreen() {
       dwellRemainingMsRef.current = 0;
       dwellRunningSinceRef.current = null;
       dwellSatisfiedRef.current = true;
-      setDwellRemainingSec(0);
       tryFinalizeRef.current();
     }, dwellRemainingMsRef.current);
-
-    // 인디케이터 갱신용 1초 간격 tick (이후 세션의 "남은 시간 mm:ss" 표시)
-    dwellIntervalRef.current = setInterval(() => {
-      if (dwellRunningSinceRef.current === null) return;
-      const elapsed = Date.now() - dwellRunningSinceRef.current;
-      const remaining = Math.max(0, dwellRemainingMsRef.current - elapsed);
-      setDwellRemainingSec(Math.ceil(remaining / 1000));
-    }, 1000);
   }, [trackingEnabled, sessionRecorded]);
 
   // trackingEnabled가 켜지는 순간 타이머 시작 (화면 focus + 앱 active 전제)
   useEffect(() => {
     if (!trackingEnabled) return;
-    setDwellRemainingSec(Math.ceil(dwellRemainingMsRef.current / 1000));
     if (screenFocusedRef.current && appActiveRef.current) {
       resumeDwellTimer();
     }
@@ -278,8 +295,29 @@ export default function DayScreen() {
   useEffect(() => {
     return () => {
       if (dwellTimerRef.current) clearTimeout(dwellTimerRef.current);
-      if (dwellIntervalRef.current) clearInterval(dwellIntervalRef.current);
     };
+  }, []);
+
+  const wordCount = words?.length ?? 0;
+
+  // 인출모드 카운트다운 라인바 — 인출모드로 (재)진입할 때마다 리셋 후 단어수×5초 선형 감소.
+  // trackingEnabled와 무관한 순수 시각 장치라 복습 Day·데드존에서도 동작(설계.md §7.3).
+  // words 배열 참조 대신 wordCount(길이)에 의존해 스와이프로 인한 setWords 재발행에는 반응하지 않는다.
+  useEffect(() => {
+    if (mode !== 'retrieval' || wordCount === 0) return;
+    cancelAnimation(lineBarProgress);
+    lineBarProgress.value = 1;
+    lineBarProgress.value = withTiming(0, {
+      duration: wordCount * COUNTDOWN_MS_PER_WORD,
+      easing: Easing.linear,
+    });
+  }, [mode, wordCount, lineBarProgress]);
+
+  // 모드 전환 — 인출모드 진입 시 뜻 컬럼만 가림(단어 컬럼은 그대로). 이후 눈 아이콘 수동
+  // 조작은 이 세팅과 독립적으로 동작한다(단방향, 설계.md §4.5).
+  const handleModeChange = useCallback((next: StudyMode) => {
+    setMode(next);
+    setColumnHidden({ word: false, meaning: next === 'retrieval' });
   }, []);
 
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
@@ -298,24 +336,7 @@ export default function DayScreen() {
     setColumnHidden((prev) => ({ ...prev, [column]: !prev[column] }));
   }, []);
 
-  // day_word.id(dayWordId) → content_word_id 조회용 (커버리지 Set은 content_word_id 기준, §7.1)
-  const contentWordIdByDayWordId = useMemo(() => {
-    const map = new Map<number, number>();
-    words?.forEach((w) => map.set(w.id, w.content_word_id));
-    return map;
-  }, [words]);
-
   const handleTapCell = useCallback((dayWordId: number, column: ColumnKey) => {
-    // 커버리지 계상: 가려진 셀의 peek 탭만 (헤더 일괄 해제·예문 바텀시트는 별도 경로라 여기 안 들어옴)
-    if (trackingEnabled && !sessionRecorded) {
-      const contentWordId = contentWordIdByDayWordId.get(dayWordId);
-      if (contentWordId !== undefined && !coveredWordIdsRef.current.has(contentWordId)) {
-        coveredWordIdsRef.current.add(contentWordId);
-        setCoveredCount(coveredWordIdsRef.current.size);
-        tryFinalizeRef.current();
-      }
-    }
-
     const key = `${dayWordId}:${column}`;
     const existingTimer = peekTimers.current.get(key);
     if (existingTimer) clearTimeout(existingTimer);
@@ -334,7 +355,7 @@ export default function DayScreen() {
       peekTimers.current.delete(key);
     }, PEEK_DURATION_MS);
     peekTimers.current.set(key, timer);
-  }, [trackingEnabled, sessionRecorded, contentWordIdByDayWordId]);
+  }, []);
 
   const handleSwipeStage = useCallback((dayWordId: number, delta: number) => {
     // 낙관적 갱신 + user.db 영속 (설계.md §5: recall_stage = MAX(0,MIN(5, ...)))
@@ -408,19 +429,19 @@ export default function DayScreen() {
 
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: dayIndex !== null ? `Day${dayIndex}` : '단어장' }} />
+      <Stack.Screen
+        options={{
+          title: dayIndex !== null ? `Day${dayIndex}` : '단어장',
+          headerRight: () => <ModeToggle mode={mode} onChange={handleModeChange} />,
+        }}
+      />
 
       {error && <Text style={styles.error}>{error}</Text>}
 
       {!error && !words && <ActivityIndicator style={styles.loading} />}
 
-      {trackingEnabled && !sessionRecorded && (
-        <RetrievalProgressIndicator
-          isFirstSession={isFirstSession}
-          coveredCount={coveredCount}
-          requiredCount={wordsRequiredForCoverage}
-          dwellRemainingSec={dwellRemainingSec}
-        />
+      {!error && words && mode === 'retrieval' && (
+        <RetrievalCountdownBar progress={lineBarProgress} />
       )}
 
       {completionBanner && (
@@ -487,37 +508,47 @@ export default function DayScreen() {
   );
 }
 
-// 인출 세션 진행 인디케이터 — 버튼 아님, 조용한 상단 표시(설계.md §7.1, §7.3).
-// 첫 세션: 커버리지 진행 "이번 인출 X/N". 이후 세션: 체류 충족까지 남은 시간(mm:ss).
-function RetrievalProgressIndicator({
-  isFirstSession,
-  coveredCount,
-  requiredCount,
-  dwellRemainingSec,
+// 학습/인출모드 2세그먼트 필 토글 (헤더 우측, 설계.md §4.5). 기본 학습모드.
+function ModeToggle({
+  mode,
+  onChange,
 }: {
-  isFirstSession: boolean;
-  coveredCount: number;
-  requiredCount: number;
-  dwellRemainingSec: number | null;
+  mode: StudyMode;
+  onChange: (next: StudyMode) => void;
 }) {
-  if (isFirstSession) {
-    return (
-      <View style={styles.progressIndicator}>
-        <Text style={styles.progressIndicatorText}>
-          이번 인출 {Math.min(coveredCount, requiredCount)}/{requiredCount}
-        </Text>
-      </View>
-    );
-  }
-
-  if (dwellRemainingSec === null || dwellRemainingSec <= 0) return null;
-  const mm = String(Math.floor(dwellRemainingSec / 60)).padStart(2, '0');
-  const ss = String(dwellRemainingSec % 60).padStart(2, '0');
   return (
-    <View style={styles.progressIndicator}>
-      <Text style={styles.progressIndicatorText}>
-        {mm}:{ss}
-      </Text>
+    <View style={styles.modeToggle}>
+      <Pressable
+        style={[styles.modeToggleSegment, mode === 'study' && styles.modeToggleSegmentActive]}
+        onPress={() => onChange('study')}
+        hitSlop={6}
+      >
+        <Text style={[styles.modeToggleText, mode === 'study' && styles.modeToggleTextActive]}>
+          학습
+        </Text>
+      </Pressable>
+      <Pressable
+        style={[styles.modeToggleSegment, mode === 'retrieval' && styles.modeToggleSegmentActive]}
+        onPress={() => onChange('retrieval')}
+        hitSlop={6}
+      >
+        <Text style={[styles.modeToggleText, mode === 'retrieval' && styles.modeToggleTextActive]}>
+          인출
+        </Text>
+      </Pressable>
+    </View>
+  );
+}
+
+// 인출모드 카운트다운 라인바 — 버튼 아님, 순수 시각 장치(설계.md §7.3). 시간 텍스트 없이
+// scaleX만으로 단어수×5초 동안 선형 감소, 소진 시 아무 일도 일어나지 않는다.
+function RetrievalCountdownBar({ progress }: { progress: SharedValue<number> }) {
+  const fillStyle = useAnimatedStyle(() => ({
+    transform: [{ scaleX: progress.value }],
+  }));
+  return (
+    <View style={styles.countdownTrack}>
+      <Animated.View style={[styles.countdownFill, fillStyle]} />
     </View>
   );
 }
@@ -596,14 +627,39 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: 4,
   },
-  progressIndicator: {
-    alignItems: 'center',
-    paddingVertical: 4,
-    backgroundColor: '#fafafa',
+  modeToggle: {
+    flexDirection: 'row',
+    backgroundColor: '#f5f5f5',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    overflow: 'hidden',
+    marginRight: 8,
   },
-  progressIndicatorText: {
-    fontSize: 12,
-    color: '#aaa',
+  modeToggleSegment: {
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+  },
+  modeToggleSegmentActive: {
+    backgroundColor: '#ddd',
+  },
+  modeToggleText: {
+    fontSize: 13,
+    color: '#999',
+    fontWeight: '600',
+  },
+  modeToggleTextActive: {
+    color: '#444',
+  },
+  countdownTrack: {
+    height: 3,
+    backgroundColor: '#eee',
+  },
+  countdownFill: {
+    height: 3,
+    width: '100%',
+    backgroundColor: '#ff9f43',
+    transformOrigin: 'left',
   },
   completionBanner: {
     position: 'absolute',

@@ -20,7 +20,6 @@ export const DEFAULT_HABIT_BONUS = {
 } as const;
 
 const TOTAL_SLOTS = 4;
-const MIN_DWELL_MS = 150_000; // 최소 체류 150초(§7.1)
 
 /** 슬롯 하나의 시간창. [startHour, endHour) 반열림 구간(§7.1). */
 export interface SlotWindow {
@@ -176,7 +175,7 @@ export async function getCurrentStreak(): Promise<number> {
   return streak;
 }
 
-/** 오늘 retrieval_session 행이 하나도 없으면 true (§7.1 커버리지 조건 적용 판단용). */
+/** 오늘 retrieval_session 행이 하나도 없으면 true (§7.1 첫 세션 체류 임계 판단용). */
 export async function isFirstSessionOfToday(): Promise<boolean> {
   const db = getUserDb();
   const today = todayEpochDay();

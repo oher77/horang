@@ -2,8 +2,8 @@
  * epoch day 유틸 (설계.md §1.4)
  *
  * 규칙:
- * - `*_day` (epoch day): 디바이스 로컬 자정 기준 정수 일련번호.
- *   `Math.floor(epochMs_of_local_midnight / 86400000)`.
+ * - `*_day` (epoch day): 디바이스 로컬 캘린더 날짜의 정수 일련번호
+ *   (1970-01-01 = 0). `Date.UTC(로컬 연, 월, 일) / 86400000`.
  *   복습 "-N일 전 학습한 Day"는 `created_day = today - N` 정수 비교로 인덱스를 탄다.
  * - `*_ms` (epoch ms): `Date.now()` 스냅샷. 로컬 표시·월별 그룹핑용.
  *
@@ -14,17 +14,12 @@
 const MS_PER_DAY = 86400000;
 
 /**
- * 주어진 Date(기본값: 현재 시각)의 "로컬 자정" 기준 epoch day를 계산한다.
- * 로컬 자정 시각의 epoch ms를 하루(86400000ms)로 나눈 값이므로, UTC epoch day와는
- * 디바이스 타임존에 따라 다를 수 있다(의도된 동작 — 기기 로컬 기준 "하루" 경계).
+ * 주어진 Date(기본값: 현재 시각)의 로컬 캘린더 날짜 기준 epoch day를 계산한다.
+ * 로컬 연/월/일을 UTC 자정 ms로 환산해 나누므로 항상 정확한 정수이며, 타임존
+ * 부호(UTC±)와 무관하게 기기 로컬 자정이 하루의 경계가 된다.
  */
 export function toEpochDay(date: Date = new Date()): number {
-  const localMidnight = new Date(
-    date.getFullYear(),
-    date.getMonth(),
-    date.getDate(),
-  );
-  return Math.floor(localMidnight.getTime() / MS_PER_DAY);
+  return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / MS_PER_DAY;
 }
 
 /** 오늘의 epoch day. */
@@ -37,17 +32,15 @@ export function nowEpochMs(): number {
   return Date.now();
 }
 
-/** epoch day → 해당 로컬 자정의 Date 객체. */
+/** epoch day → 해당 캘린더 날짜의 UTC 자정 Date 객체 (연/월/일은 UTC 게터로 읽을 것). */
 export function epochDayToDate(epochDay: number): Date {
   return new Date(epochDay * MS_PER_DAY);
 }
 
 /**
  * epoch day → "YYYY-MM-DD" 형식 문자열 (표시용).
- * epochDayToDate가 반환하는 Date는 UTC 기준 epochDay*MS_PER_DAY 시각이므로,
- * 로컬 자정으로 만들어진 값을 다시 로컬 캘린더 필드로 읽어야 왕복이 일관된다.
- * (toEpochDay가 로컬 필드로 만든 Date를 UTC ms로 환산했으므로, 여기서는 UTC
- * 필드로 읽어 원래의 로컬 연/월/일을 복원한다.)
+ * epochDay*MS_PER_DAY는 해당 로컬 캘린더 날짜의 UTC 자정이므로, UTC 필드로
+ * 읽으면 toEpochDay에 들어갔던 원래의 로컬 연/월/일이 그대로 복원된다.
  */
 export function epochDayToDateString(epochDay: number): string {
   const d = epochDayToDate(epochDay);
