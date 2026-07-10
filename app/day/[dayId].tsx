@@ -40,7 +40,7 @@ const STAGGER_MS = 15;
 const PEEK_DURATION_MS = 1400;
 
 // 하루 4회 분산 인출 습관 시스템 — 세션 트래킹 상수 (설계.md §7.1, §7.3, 2026-07-09 기준 교체)
-const DWELL_MS_PER_WORD = 1000; // 오늘 첫 세션 임계: 단어수 × 1초
+const DWELL_MS_PER_WORD = 5000; // 오늘 첫 세션 임계: 단어수 × 5초 (2026-07-10 사용자 조정, 1초→5초)
 const LATER_SESSION_BASE_MS = 3000; // 이후 세션 임계 기본값: 3초 + 배지수×1초
 const BANNER_DURATION_MS = 2000; // 완료 피드백 배너 표시 시간
 

@@ -20,6 +20,7 @@ import { Stack } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import WordDetailSheet from '../../components/WordDetailSheet';
 import { epochDayToDateString, toEpochDay } from '../../lib/dates';
 import {
   getMonthHabitBonusTotal,
@@ -35,6 +36,7 @@ import {
   setSessionPaid,
   type IncomeSessionRow,
 } from '../../lib/incomeQueries';
+import { useSettingsStore } from '../../lib/settings';
 import {
   getMonthlyIncomeTotals,
   getRecentScores,
@@ -45,6 +47,7 @@ import {
   type ScaryWord,
   type WordStatePoint,
 } from '../../lib/statsQueries';
+import { getWordDetail, type WordDetail } from '../../lib/wordDetail';
 
 /** 'YYYY-MM' 형식의 이번 달 키 (habitQueries 조회용, 로컬타임 기준). */
 function currentYearMonth(): string {
@@ -95,6 +98,11 @@ function ledgerItemKey(item: LedgerItem): string {
 const BAR_MAX_HEIGHT = 80;
 const TREND_MAX_HEIGHT = 60;
 
+// 실기기 QA 피드백(B): 장부 리스트는 화면에 최신 30건까지만 렌더한다. DB 삭제는
+// 절대 하지 않는다 — 월별 Income 차트·합계는 잘리지 않은 전체 데이터에서 계산되므로
+// 이 상수는 오직 렌더링(slice) 단계에서만 쓰인다.
+const LEDGER_DISPLAY_LIMIT = 30;
+
 function formatDateTime(ms: number): string {
   const d = new Date(ms);
   const y = d.getFullYear();
@@ -123,6 +131,13 @@ export default function AchievementsScreen() {
   const [habitBonuses, setHabitBonuses] = useState<HabitBonusRow[] | null>(null);
   const [habitBonusTotal, setHabitBonusTotal] = useState(0);
   const [habitError, setHabitError] = useState<string | null>(null);
+
+  // 낯가림 단어 탭 → 단어 상세 바텀시트 (day/[dayId].tsx의 패턴을 그대로 이식).
+  const { level } = useSettingsStore();
+  const [sheetVisible, setSheetVisible] = useState(false);
+  const [sheetLoading, setSheetLoading] = useState(false);
+  const [sheetError, setSheetError] = useState<string | null>(null);
+  const [sheetDetail, setSheetDetail] = useState<WordDetail | null>(null);
 
   const loadStats = useCallback(() => {
     setStatsError(null);
@@ -226,30 +241,60 @@ export default function AchievementsScreen() {
     }
   }, []);
 
+  const handleOpenDetail = useCallback(
+    (contentWordId: number) => {
+      setSheetVisible(true);
+      setSheetLoading(true);
+      setSheetError(null);
+      setSheetDetail(null);
+      getWordDetail(contentWordId, level)
+        .then((detail) => setSheetDetail(detail))
+        .catch((err: unknown) => setSheetError(err instanceof Error ? err.message : String(err)))
+        .finally(() => setSheetLoading(false));
+    },
+    [level],
+  );
+
+  const handleCloseSheet = useCallback(() => {
+    setSheetVisible(false);
+  }, []);
+
   return (
-    <ScrollView style={styles.scroll} contentContainerStyle={styles.container}>
-      <Stack.Screen options={{ title: '내 자랑스런 업적' }} />
+    <View style={styles.flexFill}>
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.container}>
+        <Stack.Screen options={{ title: '내 자랑스런 업적' }} />
 
-      <IncomeSection
-        monthlyIncome={monthlyIncome}
-        monthTotal={monthTotal + habitBonusTotal}
-        loading={incomeSessions === null || habitBonuses === null}
-        error={incomeError}
-        habitError={habitError}
-        unpaidItems={unpaidItems}
-        paidItemsThisMonth={paidItemsThisMonth}
-        onTogglePaid={handleTogglePaid}
-        onToggleHabitPaid={handleToggleHabitPaid}
+        <IncomeSection
+          monthlyIncome={monthlyIncome}
+          monthTotal={monthTotal + habitBonusTotal}
+          loading={incomeSessions === null || habitBonuses === null}
+          error={incomeError}
+          habitError={habitError}
+          unpaidItems={unpaidItems}
+          paidItemsThisMonth={paidItemsThisMonth}
+          onTogglePaid={handleTogglePaid}
+          onToggleHabitPaid={handleToggleHabitPaid}
+        />
+
+        <ScaryWordsSection words={scaryWords} error={statsError} onWordPress={handleOpenDetail} />
+
+        <RecentScoresSection scores={recentScores} error={statsError} />
+
+        <WordsInSection trend={wordStateTrend} error={wordTrendError} />
+
+        <WordsOutSection trend={wordStateTrend} error={wordTrendError} />
+      </ScrollView>
+
+      {/* ScrollView 바깥(화면 루트 레벨)에 렌더해야 시트가 전체 화면 위로 올라온다
+          (day/[dayId].tsx와 동일 배치). */}
+      <WordDetailSheet
+        visible={sheetVisible}
+        loading={sheetLoading}
+        error={sheetError}
+        detail={sheetDetail}
+        onClose={handleCloseSheet}
       />
-
-      <ScaryWordsSection words={scaryWords} error={statsError} />
-
-      <RecentScoresSection scores={recentScores} error={statsError} />
-
-      <WordsInSection trend={wordStateTrend} error={wordTrendError} />
-
-      <WordsOutSection trend={wordStateTrend} error={wordTrendError} />
-    </ScrollView>
+    </View>
   );
 }
 
@@ -290,7 +335,15 @@ function RecentScoresSection({ scores, error }: { scores: RecentScore[] | null; 
   );
 }
 
-function ScaryWordsSection({ words, error }: { words: ScaryWord[] | null; error: string | null }) {
+function ScaryWordsSection({
+  words,
+  error,
+  onWordPress,
+}: {
+  words: ScaryWord[] | null;
+  error: string | null;
+  onWordPress: (contentWordId: number) => void;
+}) {
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>낯가림 단어 Top10</Text>
@@ -304,13 +357,18 @@ function ScaryWordsSection({ words, error }: { words: ScaryWord[] | null; error:
       {!error && words && words.length > 0 && (
         <View style={styles.scaryList}>
           {words.map((word, index) => (
-            <View key={word.content_word_id} style={styles.scaryRow}>
+            <Pressable
+              key={word.content_word_id}
+              style={styles.scaryRow}
+              onPress={() => onWordPress(word.content_word_id)}
+              hitSlop={4}
+            >
               <Text style={styles.scaryRank}>{index + 1}</Text>
               <Text style={styles.scaryWord} numberOfLines={1}>
                 {word.headword}
               </Text>
               <Text style={styles.scaryCount}>{word.wrong_count}회</Text>
-            </View>
+            </Pressable>
           ))}
         </View>
       )}
@@ -504,12 +562,17 @@ function IncomeSection({
   const hasAnyError = Boolean(error) || Boolean(habitError);
   const isEmpty = !loading && !hasAnyError && unpaidItems.length === 0 && paidItemsThisMonth.length === 0;
 
+  // 실기기 QA 피드백(B): 화면 렌더는 최신 30건까지만 자르고, 잘린 건수만 안내 문구로
+  // 표시한다. DB 조회 결과(unpaidItems/paidItemsThisMonth) 자체는 그대로 두므로 월별
+  // Income 차트·합계 계산에는 영향이 없다.
+  const unpaidVisible = unpaidItems.slice(0, LEDGER_DISPLAY_LIMIT);
+  const unpaidHiddenCount = unpaidItems.length - unpaidVisible.length;
+  const paidVisible = paidItemsThisMonth.slice(0, LEDGER_DISPLAY_LIMIT);
+  const paidHiddenCount = paidItemsThisMonth.length - paidVisible.length;
+
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>용돈 장부</Text>
-
-      {!monthlyIncome && <ActivityIndicator style={styles.loading} />}
-      {monthlyIncome && <IncomeTrendMiniChart points={monthlyIncome} />}
 
       <View style={styles.summaryCard}>
         <Text style={styles.summaryLabel}>이달의 Income</Text>
@@ -530,9 +593,9 @@ function IncomeSection({
 
       {!loading && !hasAnyError && !isEmpty && (
         <>
-          {unpaidItems.length > 0 ? (
+          {unpaidVisible.length > 0 ? (
             <View style={styles.listContent}>
-              {unpaidItems.map((item) => (
+              {unpaidVisible.map((item) => (
                 <LedgerRow
                   key={ledgerItemKey(item)}
                   item={item}
@@ -540,6 +603,9 @@ function IncomeSection({
                   onToggleHabitPaid={onToggleHabitPaid}
                 />
               ))}
+              {unpaidHiddenCount > 0 && (
+                <Text style={styles.hiddenCountText}>오래된 항목 {unpaidHiddenCount}건은 표시하지 않아요</Text>
+              )}
             </View>
           ) : (
             <Text style={styles.emptyText}>미지급 내역이 없어요.</Text>
@@ -553,27 +619,40 @@ function IncomeSection({
 
           {showPaid && (
             <View style={styles.listContent}>
-              {paidItemsThisMonth.length === 0 ? (
+              {paidVisible.length === 0 ? (
                 <Text style={styles.emptyText}>이번 달 지급 완료 내역이 없어요.</Text>
               ) : (
-                paidItemsThisMonth.map((item) => (
-                  <LedgerRow
-                    key={ledgerItemKey(item)}
-                    item={item}
-                    onTogglePaid={onTogglePaid}
-                    onToggleHabitPaid={onToggleHabitPaid}
-                  />
-                ))
+                <>
+                  {paidVisible.map((item) => (
+                    <LedgerRow
+                      key={ledgerItemKey(item)}
+                      item={item}
+                      onTogglePaid={onTogglePaid}
+                      onToggleHabitPaid={onToggleHabitPaid}
+                    />
+                  ))}
+                  {paidHiddenCount > 0 && (
+                    <Text style={styles.hiddenCountText}>오래된 항목 {paidHiddenCount}건은 표시하지 않아요</Text>
+                  )}
+                </>
               )}
             </View>
           )}
         </>
       )}
+
+      {/* 실기기 QA 피드백(A): 월별 Income 미니 차트는 지급/미지급 리스트 아래(섹션 하단)로 이동.
+          요약 합계(summaryCard)는 기존 위치(섹션 상단) 유지. */}
+      {!monthlyIncome && <ActivityIndicator style={styles.loading} />}
+      {monthlyIncome && <IncomeTrendMiniChart points={monthlyIncome} />}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  flexFill: {
+    flex: 1,
+  },
   scroll: {
     flex: 1,
     backgroundColor: '#fff',
@@ -724,6 +803,12 @@ const styles = StyleSheet.create({
   },
   listContent: {
     gap: 12,
+  },
+  hiddenCountText: {
+    fontSize: 11,
+    color: '#aaa',
+    textAlign: 'center',
+    marginTop: 4,
   },
   paidToggleSection: {
     marginTop: 16,
