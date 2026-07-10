@@ -15,14 +15,24 @@
     ]
   },
   "hooks": {
-    "PostToolUse": [
+    "Stop": [
       {
-        "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
             "command": "bash .claude/hooks/tsc-check.sh",
-            "asyncRewake": true,
+            "timeout": 180,
+            "statusMessage": "타입체크 중..."
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/tsc-check.sh",
             "timeout": 180,
             "statusMessage": "타입체크 중..."
           }
