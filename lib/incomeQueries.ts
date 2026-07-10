@@ -146,6 +146,40 @@ export async function getIncomeSessionsThisMonth(): Promise<IncomeSessionRow[]> 
   }));
 }
 
+/**
+ * 미지급(paid=0) test_session 전체 기간 목록을 최신순으로 반환한다 (용돈 장부
+ * "미지급 우선 + 펼치기" 개편용). 이번 달로 좁히면 지난달 미지급 건이 시야에서
+ * 사라져 부모가 놓칠 수 있어 기간 제한 없이 전체를 조회한다.
+ */
+export async function getUnpaidIncomeSessions(): Promise<IncomeSessionRow[]> {
+  const userDb = getUserDb();
+
+  const rows = await userDb.getAllAsync<{
+    id: number;
+    taken_ms: number;
+    day_id: number;
+    day_index: number;
+    score100: number | null;
+    income_amount: number | null;
+    paid: number;
+  }>(
+    `SELECT ts.id, ts.taken_ms, ts.day_id, d.day_index, ts.score100, ts.income_amount, ts.paid
+     FROM test_session ts JOIN day d ON d.id = ts.day_id
+     WHERE ts.paid = 0
+     ORDER BY ts.taken_ms DESC`,
+  );
+
+  return rows.map((r) => ({
+    sessionId: r.id,
+    takenMs: r.taken_ms,
+    dayId: r.day_id,
+    dayIndex: r.day_index,
+    score100: r.score100,
+    incomeAmount: r.income_amount,
+    paid: r.paid === 1,
+  }));
+}
+
 /** 이달 Income 합 (Q-INCOME-MONTH). */
 export async function getMonthIncomeTotal(): Promise<number> {
   const userDb = getUserDb();

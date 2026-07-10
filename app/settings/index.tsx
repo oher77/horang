@@ -12,11 +12,13 @@
 import { Stack } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
+  Alert,
   Keyboard,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   TouchableWithoutFeedback,
@@ -24,10 +26,20 @@ import {
 } from 'react-native';
 
 import {
+  getHabitBonusAmounts,
+  updateHabitBonusAmount,
+} from '../../lib/habitQueries';
+import {
   getIncomeRules,
   updateIncomeRuleAmount,
   type IncomeRule,
 } from '../../lib/incomeQueries';
+import {
+  isNotificationsEnabled,
+  rescheduleSlotNotifications,
+  scheduleTestNotification,
+  setNotificationsEnabled,
+} from '../../lib/notifications';
 import {
   setDifficultyLevel,
   setSlots,
@@ -100,7 +112,11 @@ export default function SettingsScreen() {
 
           <SlotConfigSection />
 
+          <NotificationSection />
+
           <IncomeRulesSection />
+
+          <HabitBonusSection />
         </View>
       </TouchableWithoutFeedback>
     </ScrollView>
@@ -230,6 +246,8 @@ function SlotConfigSection() {
       setSaving(true);
       try {
         await setSlots(nextSlots);
+        // 슬롯 시간이 바뀌면 예약된 알림도 새 시각 기준으로 다시 계산해야 한다.
+        await rescheduleSlotNotifications();
       } catch (err) {
         setSectionError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -311,6 +329,86 @@ function HourStepper({
         hitSlop={8}
       >
         <Text style={styles.stepperButtonText}>+</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+/**
+ * 시간대 미션 알림 섹션 (설계.md §7.6, 2026-07-09 구현).
+ * 스위치로 켬/끔(app_meta.notifications_enabled 영속) + 테스트 알림 버튼.
+ * 권한 거부 시 스위치를 원위치로 되돌리고 Alert로 설정 앱 안내를 띄운다.
+ */
+function NotificationSection() {
+  const [enabled, setEnabled] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    isNotificationsEnabled()
+      .then((value) => {
+        if (!cancelled) {
+          setEnabled(value);
+          setLoaded(true);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleToggle = useCallback(async (next: boolean) => {
+    setEnabled(next); // 즉시 반영(낙관적 갱신)
+    setBusy(true);
+    try {
+      const result = await setNotificationsEnabled(next);
+      setEnabled(result);
+      if (next && !result) {
+        Alert.alert('알림 권한이 필요해요', '설정 앱에서 알림을 허용해주세요.');
+      }
+    } catch {
+      setEnabled(!next); // 실패 시 원위치
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const handleTest = useCallback(async () => {
+    setBusy(true);
+    try {
+      const ok = await scheduleTestNotification();
+      if (ok) {
+        Alert.alert('테스트 알림 예약됨', '5초 후 알림이 옵니다. 홈 화면으로 나가서 확인해보세요.');
+      } else {
+        Alert.alert('알림 권한이 필요해요', '설정 앱에서 알림을 허용해주세요.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  return (
+    <View style={styles.incomeSection}>
+      <Text style={styles.sectionTitle}>시간대 알림</Text>
+      <Text style={styles.sectionDesc}>
+        각 시간대가 시작될 때 알림으로 알려드려요. 이미 완료한 시간대는 알림이 오지 않습니다.
+      </Text>
+
+      <View style={styles.incomeRow}>
+        <Text style={styles.incomeRowLabel}>알림 받기</Text>
+        <Switch value={enabled} onValueChange={handleToggle} disabled={!loaded || busy} />
+      </View>
+
+      <Pressable
+        style={[styles.testButton, busy && styles.testButtonDisabled]}
+        onPress={handleTest}
+        disabled={busy}
+      >
+        <Text style={styles.testButtonText}>알림 테스트 (5초 후)</Text>
       </Pressable>
     </View>
   );
@@ -424,6 +522,128 @@ function IncomeRulesSection() {
         ) : null,
       )}
       {savedId !== null && <Text style={styles.savedText}>저장되었습니다.</Text>}
+    </View>
+  );
+}
+
+/** 습관 보너스 편집 행 정의(§B-2) — kind는 lib/habitQueries.ts의 updateHabitBonusAmount 인자와 동일. */
+const HABIT_BONUS_ROWS: { kind: 'fullDay' | 'streak7'; label: string }[] = [
+  { kind: 'fullDay', label: '하루 4회 완주' },
+  { kind: 'streak7', label: '7일 연속' },
+];
+
+/**
+ * 습관 보너스 금액(하루 4회 완주 / 7일 연속) 편집 섹션.
+ * IncomeRulesSection과 동일한 TextInput(number-pad)+onBlur 즉시저장 패턴이나,
+ * 대상이 income_rule처럼 DB 목록이 아니라 고정 2행(app_meta 키 2개)이라 drafts를
+ * kind로 키잉한다. 사용자가 명시 요청한 건 "완주 상금"이지만 7일 연속 보너스도
+ * 같은 성격(습관 보너스)이라 함께 편집 가능하게 했다 — 완료 보고에 명시.
+ */
+function HabitBonusSection() {
+  const [amounts, setAmounts] = useState<{ fullDay: number; streak7: number } | null>(null);
+  const [drafts, setDrafts] = useState<Record<'fullDay' | 'streak7', string>>({ fullDay: '', streak7: '' });
+  const [loaded, setLoaded] = useState(false);
+  const [savingKind, setSavingKind] = useState<'fullDay' | 'streak7' | null>(null);
+  const [savedKind, setSavedKind] = useState<'fullDay' | 'streak7' | null>(null);
+  const [rowError, setRowError] = useState<Record<'fullDay' | 'streak7', string>>({ fullDay: '', streak7: '' });
+
+  useEffect(() => {
+    let cancelled = false;
+    getHabitBonusAmounts()
+      .then((result) => {
+        if (cancelled) return;
+        setAmounts(result);
+        setDrafts({ fullDay: String(result.fullDay), streak7: String(result.streak7) });
+        setLoaded(true);
+      })
+      .catch(() => {
+        if (!cancelled) setLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleChangeText = useCallback((kind: 'fullDay' | 'streak7', text: string) => {
+    // 숫자만 허용(음수/소수점 입력 자체를 막아 즉시 피드백)
+    const digitsOnly = text.replace(/[^0-9]/g, '');
+    setDrafts((prev) => ({ ...prev, [kind]: digitsOnly }));
+    setSavedKind(null);
+  }, []);
+
+  const handleBlur = useCallback(async (kind: 'fullDay' | 'streak7') => {
+    if (!amounts) return;
+    const draft = drafts[kind];
+    const current = amounts[kind];
+    setRowError((prev) => ({ ...prev, [kind]: '' }));
+
+    if (draft === '') {
+      // 빈 입력은 저장하지 않고 이전 값으로 되돌린다.
+      setDrafts((prev) => ({ ...prev, [kind]: String(current) }));
+      return;
+    }
+
+    const amount = Number(draft);
+    if (!Number.isInteger(amount) || amount < 0) {
+      setRowError((prev) => ({ ...prev, [kind]: '0 이상의 숫자만 입력하세요.' }));
+      setDrafts((prev) => ({ ...prev, [kind]: String(current) }));
+      return;
+    }
+
+    if (amount === current) return; // 변경 없음
+
+    setSavingKind(kind);
+    try {
+      await updateHabitBonusAmount(kind, amount);
+      setAmounts((prev) => (prev ? { ...prev, [kind]: amount } : prev));
+      setSavedKind(kind);
+    } catch (err) {
+      setRowError((prev) => ({
+        ...prev,
+        [kind]: err instanceof Error ? err.message : String(err),
+      }));
+      setDrafts((prev) => ({ ...prev, [kind]: String(current) }));
+    } finally {
+      setSavingKind(null);
+    }
+  }, [amounts, drafts]);
+
+  return (
+    <View style={styles.incomeSection}>
+      <Text style={styles.sectionTitle}>습관 보너스</Text>
+      <Text style={styles.sectionDesc}>
+        인출 습관 목표를 달성했을 때 지급되는 보너스 금액을 수정할 수 있습니다.
+        이미 확정된 지난 보너스에는 소급 적용되지 않고, 다음 달성부터 새 금액이 적용됩니다.
+      </Text>
+
+      {!loaded && <Text style={styles.optionHint}>불러오는 중…</Text>}
+
+      <View style={styles.incomeRows}>
+        {HABIT_BONUS_ROWS.map((row) => (
+          <View key={row.kind} style={styles.incomeRow}>
+            <Text style={styles.incomeRowLabel}>{row.label}</Text>
+            <View style={styles.incomeInputWrap}>
+              <TextInput
+                style={styles.incomeInput}
+                keyboardType="number-pad"
+                value={drafts[row.kind]}
+                onChangeText={(text) => handleChangeText(row.kind, text)}
+                onBlur={() => handleBlur(row.kind)}
+                editable={savingKind !== row.kind}
+                maxLength={6}
+              />
+              <Text style={styles.incomeWon}>원</Text>
+            </View>
+          </View>
+        ))}
+      </View>
+
+      {(['fullDay', 'streak7'] as const).map((kind) =>
+        rowError[kind] ? (
+          <Text key={kind} style={styles.error}>{rowError[kind]}</Text>
+        ) : null,
+      )}
+      {savedKind !== null && <Text style={styles.savedText}>저장되었습니다.</Text>}
     </View>
   );
 }
@@ -578,5 +798,21 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#2e8b57',
     textAlign: 'center',
+  },
+  testButton: {
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: '#ff8a34',
+    borderRadius: 12,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  testButtonDisabled: {
+    opacity: 0.5,
+  },
+  testButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#ff8a34',
   },
 });

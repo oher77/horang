@@ -209,6 +209,14 @@ CREATE TABLE IF NOT EXISTS habit_bonus (
   created_ms INTEGER NOT NULL,
   UNIQUE(local_day, kind)                    -- 하루 같은 종류 보너스 중복 지급 방지(멱등)
 );
+
+-- 발음 헷갈림 "해소" 기록 (설계.md §6-10, 2026-07-09 확정). 단어당 최신 해소 시각 1행.
+-- 활성/해소 판정은 저장 플래그가 아니라 시각 비교로 파생: 해소 이후 테스트에서
+-- pron_confused 체크가 다시 생기면(taken_ms > resolved_ms) 자동으로 장부에 복귀한다.
+CREATE TABLE IF NOT EXISTS pron_resolution (
+  content_word_id INTEGER PRIMARY KEY,
+  resolved_ms     INTEGER NOT NULL
+);
 `;
 
 /** slot_config 기본 4행 시드값 (설계.md §7.2): (0,6,10)(1,10,15)(2,15,20)(3,20,24). */
@@ -250,12 +258,12 @@ async function ensureUserDb(): Promise<SQLite.SQLiteDatabase> {
   // slot_config 기본 4행 보장 (§7.2)
   await ensureSlotConfig(db);
 
-  // app_meta 스키마 버전 기록 (신규 설치는 '2'로 seed)
+  // app_meta 스키마 버전 기록 (신규 설치는 '3'으로 seed — '3': pron_resolution 추가)
   await db.runAsync(
-    "INSERT OR IGNORE INTO app_meta (key, value) VALUES ('user_schema_version', '2')",
+    "INSERT OR IGNORE INTO app_meta (key, value) VALUES ('user_schema_version', '3')",
   );
-  // 기존 설치(버전 '1')는 INSERT OR IGNORE로 올라가지 않으므로 명시적으로 갱신 (§7.2 마이그레이션 절차 3)
-  await db.runAsync("UPDATE app_meta SET value = '2' WHERE key = 'user_schema_version'");
+  // 기존 설치(구버전)는 INSERT OR IGNORE로 올라가지 않으므로 명시적으로 갱신 (§7.2 마이그레이션 절차 3)
+  await db.runAsync("UPDATE app_meta SET value = '3' WHERE key = 'user_schema_version'");
 
   return db;
 }

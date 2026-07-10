@@ -6,30 +6,46 @@
  * 체크가 남은 단어를 headword/체크 횟수/최근 체크일로 모아 보여주고, 행마다 TTS로
  * 다시 들어볼 수 있게 한다.
  *
- * 해소(체크 해제) 처리: 설계.md·기획서 어디에도 이 장부에서의 리셋 액션이 규정돼
- * 있지 않다 — 기획서는 "채점 시 체크가 생성된다"는 것만 명시. 따라서 이번 구현은
- * 목록을 유지하는 누적 기록 뷰로만 구현했다 (해소 액션 없음). 자세한 판단 근거는
- * lib/statsQueries.ts의 getPronunciationConfusedWords 주석 참고, 완료 보고에도 명시.
+ * 해소 처리 (2026-07-09 확정, A안 + 재발 자동 복귀): 활성 행을 왼쪽으로 스와이프해
+ * 나오는 "외워짐" 버튼으로 셀프 해소 → 하단 "외워짐" 섹션으로 이동. 외워짐 행을 같은
+ * 방식으로 스와이프하면 "까먹음" 버튼으로 되돌린다. 이후 테스트에서 같은 단어에 다시
+ * 헷갈림 체크가 생기면 자동으로 활성 목록에 복귀한다 (시각 비교 파생 —
+ * lib/statsQueries.ts getPronunciationLedger 주석 참고).
  */
 
 import * as Speech from 'expo-speech';
 import { Stack } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Pressable, SectionList, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import ReanimatedSwipeable, { type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
 import { runOnJS } from 'react-native-reanimated';
 
 import { epochDayToDateString, toEpochDay } from '../../lib/dates';
-import { getPronunciationConfusedWords, type PronunciationConfusedWord } from '../../lib/statsQueries';
+import {
+  getPronunciationLedger,
+  resolvePronunciation,
+  unresolvePronunciation,
+  type PronunciationConfusedWord,
+  type PronunciationLedger,
+} from '../../lib/statsQueries';
+
+type RowKind = 'active' | 'resolved';
+
+interface LedgerSection {
+  title: string;
+  kind: RowKind;
+  data: PronunciationConfusedWord[];
+}
 
 export default function PronunciationScreen() {
-  const [words, setWords] = useState<PronunciationConfusedWord[] | null>(null);
+  const [ledger, setLedger] = useState<PronunciationLedger | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setError(null);
-    getPronunciationConfusedWords()
-      .then(setWords)
+    getPronunciationLedger()
+      .then(setLedger)
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
   }, []);
 
@@ -44,15 +60,45 @@ export default function PronunciationScreen() {
     };
   }, []);
 
+  const handleResolve = useCallback(
+    (contentWordId: number) => {
+      resolvePronunciation(contentWordId)
+        .then(load)
+        .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+    },
+    [load],
+  );
+
+  const handleUndo = useCallback(
+    (contentWordId: number) => {
+      unresolvePronunciation(contentWordId)
+        .then(load)
+        .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+    },
+    [load],
+  );
+
+  const sections = useMemo<LedgerSection[]>(() => {
+    if (!ledger) return [];
+    const result: LedgerSection[] = [];
+    if (ledger.active.length > 0) {
+      result.push({ title: `헷갈리는 단어 ${ledger.active.length}`, kind: 'active', data: ledger.active });
+    }
+    if (ledger.resolved.length > 0) {
+      result.push({ title: `외워짐 ${ledger.resolved.length}`, kind: 'resolved', data: ledger.resolved });
+    }
+    return result;
+  }, [ledger]);
+
   return (
     <View style={styles.container}>
       <Stack.Screen options={{ title: '발음 체크 장부' }} />
 
       {error && <Text style={styles.error}>{error}</Text>}
 
-      {!error && !words && <ActivityIndicator style={styles.loading} />}
+      {!error && !ledger && <ActivityIndicator style={styles.loading} />}
 
-      {!error && words && words.length === 0 && (
+      {!error && ledger && sections.length === 0 && (
         <View style={styles.empty}>
           <Text style={styles.emptyText}>발음이 헷갈렸던 단어가 없어요.</Text>
           <Text style={styles.emptySubText}>
@@ -61,19 +107,40 @@ export default function PronunciationScreen() {
         </View>
       )}
 
-      {!error && words && words.length > 0 && (
-        <FlatList
-          data={words}
+      {!error && ledger && sections.length > 0 && (
+        <SectionList
+          sections={sections}
           keyExtractor={(item) => String(item.content_word_id)}
           contentContainerStyle={styles.listContent}
-          renderItem={({ item }) => <PronunciationRow item={item} />}
+          stickySectionHeadersEnabled={false}
+          renderSectionHeader={({ section }) => (
+            <Text style={styles.sectionHeader}>{section.title}</Text>
+          )}
+          renderItem={({ item, section }) => (
+            <PronunciationRow
+              item={item}
+              kind={(section as LedgerSection).kind}
+              onResolve={handleResolve}
+              onUndo={handleUndo}
+            />
+          )}
         />
       )}
     </View>
   );
 }
 
-function PronunciationRowImpl({ item }: { item: PronunciationConfusedWord }) {
+function PronunciationRowImpl({
+  item,
+  kind,
+  onResolve,
+  onUndo,
+}: {
+  item: PronunciationConfusedWord;
+  kind: RowKind;
+  onResolve: (contentWordId: number) => void;
+  onUndo: (contentWordId: number) => void;
+}) {
   const [speaking, setSpeaking] = useState(false);
 
   const handleSpeak = useCallback(() => {
@@ -93,21 +160,57 @@ function PronunciationRowImpl({ item }: { item: PronunciationConfusedWord }) {
     runOnJS(handleSpeak)();
   });
 
-  return (
-    <View style={styles.card}>
-      <View style={styles.cardMain}>
-        <Text style={styles.wordText}>{item.headword}</Text>
-        <Text style={styles.metaText}>
-          체크 {item.confused_count}회 · 최근 {formatCheckedDate(item.last_checked_ms)}
-        </Text>
-      </View>
+  const isResolved = kind === 'resolved';
+  const swipeRef = useRef<SwipeableMethods>(null);
 
-      <GestureDetector gesture={tapGesture}>
-        <View style={[styles.speakerButton, speaking && styles.speakerButtonActive]}>
-          <Text style={styles.speakerIcon}>{speaking ? '🔊' : '🔈'}</Text>
+  const handleSwipeAction = useCallback(() => {
+    swipeRef.current?.close();
+    if (isResolved) {
+      onUndo(item.content_word_id);
+    } else {
+      onResolve(item.content_word_id);
+    }
+  }, [isResolved, item.content_word_id, onResolve, onUndo]);
+
+  // 왼쪽 스와이프로 노출되는 액션 버튼: 활성 행 = "외워짐"(해소), 외워짐 행 = "까먹음"(되돌리기)
+  const renderRightActions = useCallback(
+    () => (
+      <Pressable
+        style={[styles.swipeAction, isResolved ? styles.swipeActionForgot : styles.swipeActionMemorized]}
+        onPress={handleSwipeAction}
+      >
+        <Text style={styles.swipeActionText}>{isResolved ? '까먹음' : '외워짐'}</Text>
+      </Pressable>
+    ),
+    [handleSwipeAction, isResolved],
+  );
+
+  return (
+    <ReanimatedSwipeable
+      ref={swipeRef}
+      renderRightActions={renderRightActions}
+      friction={2}
+      rightThreshold={36}
+      overshootRight={false}
+      containerStyle={styles.rowContainer}
+    >
+      <View style={[styles.card, isResolved && styles.cardResolved]}>
+        <View style={styles.cardMain}>
+          <Text style={[styles.wordText, isResolved && styles.wordTextResolved]}>{item.headword}</Text>
+          <Text style={styles.metaText}>
+            {isResolved && item.resolved_ms !== null
+              ? `외워짐 ${formatCheckedDate(item.resolved_ms)} · 체크 ${item.confused_count}회`
+              : `체크 ${item.confused_count}회 · 최근 ${formatCheckedDate(item.last_checked_ms)}`}
+          </Text>
         </View>
-      </GestureDetector>
-    </View>
+
+        <GestureDetector gesture={tapGesture}>
+          <View style={[styles.speakerButton, speaking && styles.speakerButtonActive]}>
+            <Text style={styles.speakerIcon}>{speaking ? '🔊' : '🔈'}</Text>
+          </View>
+        </GestureDetector>
+      </View>
+    </ReanimatedSwipeable>
   );
 }
 const PronunciationRow = PronunciationRowImpl;
@@ -149,6 +252,17 @@ const styles = StyleSheet.create({
   },
   listContent: {
     padding: 16,
+    paddingBottom: 32,
+  },
+  sectionHeader: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#888',
+    marginTop: 8,
+    marginBottom: 10,
+  },
+  rowContainer: {
+    marginBottom: 12,
   },
   card: {
     flexDirection: 'row',
@@ -156,7 +270,27 @@ const styles = StyleSheet.create({
     backgroundColor: '#f7f7f7',
     borderRadius: 12,
     padding: 16,
-    marginBottom: 12,
+  },
+  cardResolved: {
+    backgroundColor: '#fbfbfb',
+  },
+  swipeAction: {
+    width: 88,
+    marginLeft: 8,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  swipeActionMemorized: {
+    backgroundColor: '#2e7d32',
+  },
+  swipeActionForgot: {
+    backgroundColor: '#ff9f43',
+  },
+  swipeActionText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#fff',
   },
   cardMain: {
     flex: 1,
@@ -165,6 +299,9 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '700',
     color: '#222',
+  },
+  wordTextResolved: {
+    color: '#999',
   },
   metaText: {
     marginTop: 4,

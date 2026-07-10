@@ -1,9 +1,10 @@
 import { Stack } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, StyleSheet, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { initDatabases } from '../lib/db';
+import { rescheduleSlotNotifications } from '../lib/notifications';
 import { loadSettings } from '../lib/settings';
 
 type InitState = 'loading' | 'ready' | 'error';
@@ -30,6 +31,21 @@ export default function RootLayout() {
       cancelled = true;
     };
   }, []);
+
+  // 시간대 미션 알림 재예약: DB 초기화 완료 직후(앱 시작) + 포그라운드 복귀마다.
+  // rescheduleSlotNotifications()는 내부에서 활성화 여부를 판단하므로 무조건 호출한다.
+  useEffect(() => {
+    if (state !== 'ready') return;
+
+    rescheduleSlotNotifications();
+
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        rescheduleSlotNotifications();
+      }
+    });
+    return () => subscription.remove();
+  }, [state]);
 
   if (state === 'loading') {
     return (

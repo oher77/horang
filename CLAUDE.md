@@ -96,7 +96,7 @@ data/voca_data.xlsx (원본, 수정 금지)
 ## 가드레일
 
 - **Expo Go에 포함되지 않은 서드파티 네이티브 모듈 도입 금지.** 도입하는 순간 dev build(= 유료 Apple 계정)가 강제됨. FlashList도 이 이유로 금지 — 100+행 테이블은 RN 내장 FlatList 윈도잉(보이는 15~20행) + stagger 애니메이션으로 처리 (설계.md §4.5).
-- 허용된 네이티브 의존성: expo-sqlite, expo-speech, react-native-reanimated, react-native-gesture-handler (+ expo-router 동반 패키지).
+- 허용된 네이티브 의존성: expo-sqlite, expo-speech, expo-notifications, react-native-reanimated, react-native-gesture-handler (+ expo-router 동반 패키지).
 - `data/voca_data.xlsx`·`build/id_map.json`을 임의 수정/삭제하지 말 것 — id_map이 깨지면 앱 업데이트 시 사용자 진행 데이터 참조가 전부 무효화된다.
 - TTS 연속 탭 중복 재생 방지: `Speech.stop()` 후 `speak()` 패턴.
 
@@ -112,10 +112,10 @@ data/voca_data.xlsx (원본, 수정 금지)
 
 ## 현재 상태 & 다음 단계 (2026-07-09)
 
-0. **인출 습관 시스템 구현 완료** (2026-07-09, 설계.md §7이 확정 스펙): 4슬롯 게이지·스트릭(홈), 세션 트래킹(단어장: 체류시간 단독 판정 — 첫 세션 단어수×1초 / 이후 세션 3초+배지수×1초, 커버리지 조건 폐지), 학습/인출모드 토글 + 인출모드 카운트다운 라인바(단어수×5초), 슬롯 시간창 설정(스테퍼), 습관 보너스 장부 연동. user.db 스키마 버전 '2' (retrieval_session/slot_config/habit_bonus — IF NOT EXISTS 멱등 마이그레이션). 신선한 검증자 18항목 전수 통과, 실기기 QA 대기. Phase 2(슬롯 알림)는 expo-notifications의 Expo Go 호환 검증 선행.
+0. **인출 습관 시스템 구현 완료** (2026-07-09, 설계.md §7이 확정 스펙): 4슬롯 게이지·스트릭(홈), 세션 트래킹(단어장: 체류시간 단독 판정 — 첫 세션 단어수×1초 / 이후 세션 3초+배지수×1초, 커버리지 조건 폐지), 학습/인출모드 토글 + 인출모드 카운트다운 라인바(단어수×5초), 슬롯 시간창 설정(스테퍼), 습관 보너스 장부 연동. user.db 스키마 버전 '3' ('2': retrieval_session/slot_config/habit_bonus, '3': pron_resolution — IF NOT EXISTS 멱등 마이그레이션). 신선한 검증자 18항목 전수 통과, 실기기 QA 대기. **Phase 2(슬롯 알림) 구현 완료(2026-07-09)**: expo-notifications 로컬 알림, 앱 포그라운드 전환마다 48시간 지평선 재예약(오늘 남은 미완료 슬롯 + 내일 4슬롯), 기본 OFF 토글(설정 화면 "시간대 알림" 섹션) + 테스트 알림 버튼. lib/notifications.ts. **용돈 장부 병합 + 보너스 금액 설정화(2026-07-09)**: 업적 화면 용돈 장부에서 테스트 수입/습관 보너스를 시간 내림차순 단일 리스트로 병합, 보너스 금액(200원/500원 기본값)은 설정 화면 "습관 보너스" 섹션에서 app_meta로 편집 가능(lib/habitQueries.ts getHabitBonusAmounts/updateHabitBonusAmount). **업적 화면 추이 그래프 3종 추가 + 장부 효율화(2026-07-09)**: 월별 Income 추이(용돈 장부 상단, 6개월)·단어 정답/오답 상태 추이(최근 30일 일별, "머리에 들어온 단어"/"아직 안 외워진 단어" 신규 섹션) 추가, Q-CORRECT-CUMULATIVE는 재채점 시 정답↔오답 역전을 표현 못 해 폐기하고 getWordStateTrend로 대체. 용돈 장부는 미지급(전체 기간)을 항상 노출하고 지급완료(이번 달만)는 접어서 토글 노출. 섹션 순서: 용돈장부→낯가림→최근5일점수→정답추이→오답추이.
 
 1. **콘텐츠 완성** — 검수 전량 완료(word 9건 + writing 43/43), Batch API 생성 2,430건 전부 성공, 커버리지 누락 152건은 `repair` 서브커맨드 반복 실행으로 0건 수렴, validate 전 항목 통과. `assets/db/content.db` 실데이터 빌드 완료 (word 2,416 / meaning 3,719 / example 11,411 / writing 43, 2.9MB). 파이프라인 절차는 `/content-pipeline` 스킬 참조.
 2. **화면 구현 완료** — 홈(통계: 최근5일 점수·낯가림 top10)·단어장(가리기 애니메이션/스와이프 5단계/TTS/난이도별 예문 바텀시트)·복습(7오프셋)·테스트(혼합 출제·자기채점·Income 기록)·용돈 장부(지급 체크)·발음 체크 장부·설정(난이도). Expo Go 실기기 구동 확인됨.
 3. 프로젝트는 **Expo SDK 54 고정** (스토어 Expo Go 호환 — 상세는 horang-worker-guide 스킬). 시스템 Python 3.9. anthropic SDK 0.116.0 --user 설치됨.
-4. 문서 미결로 기본값 정한 것들 (사용자 조정 가능): 테스트 쓰기문제 비율 30%(lib/reviewQueries.ts WRITING_RATIO), 점수→용돈 매핑(lib/incomeQueries.ts DEFAULT_INCOME_RULES: 100점 1000원/90↑ 800/70↑ 500/50↑ 300), 엿보기 1.4초, 발음 장부는 읽기 전용 누적(해소 UX 미결).
+4. 문서 미결로 기본값 정한 것들 (사용자 조정 가능): 테스트 쓰기문제 비율 30%(lib/reviewQueries.ts WRITING_RATIO), 점수→용돈 매핑(lib/incomeQueries.ts DEFAULT_INCOME_RULES: 100점 1000원/90↑ 800/70↑ 500/50↑ 300), 엿보기 1.4초. 발음 장부 해소 UX는 확정·구현됨(2026-07-09): 셀프 체크 해소 + 이후 테스트 재체크 시 자동 복귀(설계.md §6-10, pron_resolution).
 5. **다음 후보**: 실기기 전 화면 QA(체크리스트는 각 워커 완료 보고 참조) → 사용자 피드백 반영 → 단어장 예문 컬럼 추가 여부 결정 → 배포 준비(EAS 빌드, 유료 Apple 계정 필요 시점에 제안).

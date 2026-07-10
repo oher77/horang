@@ -13,11 +13,61 @@
 import { getUserDb } from './db';
 import { nowEpochMs, todayEpochDay } from './dates';
 
-/** 습관 보너스 금액 기본값 (설계.md §7.4). income_rule과 축이 달라 섞지 않는다. */
+/**
+ * 습관 보너스 금액 기본값(설정에서 변경 가능, app_meta) — 설계.md §7.4.
+ * income_rule과 축이 달라 섞지 않는다. app_meta에 사용자 편집값이 없을 때의
+ * 폴백 기본값으로만 쓰인다(2026-07-09부터 편집 가능 — getHabitBonusAmounts 참고).
+ */
 export const DEFAULT_HABIT_BONUS = {
   fullDay: 200, // 하루 4/4 달성 보너스(원)
   streak7: 500, // 7일 연속 달성 시 추가 보너스(원). 7·14·21…일마다 지급(주기)
 } as const;
+
+const HABIT_BONUS_FULL_DAY_KEY = 'habit_bonus_full_day_amount';
+const HABIT_BONUS_STREAK7_KEY = 'habit_bonus_streak7_amount';
+
+/**
+ * 습관 보너스 금액을 app_meta에서 읽는다(설정 화면 편집값). 키가 없으면(최초
+ * 설치·미편집) DEFAULT_HABIT_BONUS 폴백 — lazy read, 시드 INSERT 불필요
+ * (lib/notifications.ts의 app_meta 읽기 관행과 동일).
+ */
+export async function getHabitBonusAmounts(): Promise<{ fullDay: number; streak7: number }> {
+  const db = getUserDb();
+  const rows = await db.getAllAsync<{ key: string; value: string }>(
+    'SELECT key, value FROM app_meta WHERE key IN (?, ?)',
+    [HABIT_BONUS_FULL_DAY_KEY, HABIT_BONUS_STREAK7_KEY],
+  );
+  const map = new Map(rows.map((r) => [r.key, r.value]));
+
+  const fullDayRaw = map.get(HABIT_BONUS_FULL_DAY_KEY);
+  const streak7Raw = map.get(HABIT_BONUS_STREAK7_KEY);
+
+  const fullDay = fullDayRaw !== undefined ? Number(fullDayRaw) : DEFAULT_HABIT_BONUS.fullDay;
+  const streak7 = streak7Raw !== undefined ? Number(streak7Raw) : DEFAULT_HABIT_BONUS.streak7;
+
+  return {
+    fullDay: Number.isFinite(fullDay) ? fullDay : DEFAULT_HABIT_BONUS.fullDay,
+    streak7: Number.isFinite(streak7) ? streak7 : DEFAULT_HABIT_BONUS.streak7,
+  };
+}
+
+/**
+ * 습관 보너스 금액 편집(설정 화면). 0 이상의 정수만 허용 — updateIncomeRuleAmount와
+ * 동일한 검증 관행. 이미 기록된 과거 habit_bonus.amount는 기록 시점의 스냅샷이라
+ * 소급 변경되지 않는다(recordRetrievalSession 참고) — 새로 확정되는 보너스부터 적용.
+ */
+export async function updateHabitBonusAmount(kind: 'fullDay' | 'streak7', amount: number): Promise<void> {
+  if (!Number.isInteger(amount) || amount < 0) {
+    throw new Error('보너스 금액은 0 이상의 정수여야 합니다.');
+  }
+  const key = kind === 'fullDay' ? HABIT_BONUS_FULL_DAY_KEY : HABIT_BONUS_STREAK7_KEY;
+  const db = getUserDb();
+  await db.runAsync(
+    `INSERT INTO app_meta (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    [key, String(amount)],
+  );
+}
 
 const TOTAL_SLOTS = 4;
 
@@ -216,6 +266,7 @@ export interface RecordResult {
  */
 export async function recordRetrievalSession(dayId: number): Promise<RecordResult> {
   const db = getUserDb();
+  const bonusAmounts = await getHabitBonusAmounts();
 
   const isToday = await isTodayDay(dayId);
   if (!isToday) {
@@ -254,7 +305,7 @@ export async function recordRetrievalSession(dayId: number): Promise<RecordResul
     if (isFullDay) {
       const fullDayResult = await db.runAsync(
         'INSERT OR IGNORE INTO habit_bonus (local_day, kind, amount, paid, created_ms) VALUES (?, ?, ?, 0, ?)',
-        [today, 'full_day', DEFAULT_HABIT_BONUS.fullDay, doneMs],
+        [today, 'full_day', bonusAmounts.fullDay, doneMs],
       );
       fullDayBonusPaid = fullDayResult.changes > 0;
 
@@ -271,7 +322,7 @@ export async function recordRetrievalSession(dayId: number): Promise<RecordResul
       if (streak > 0 && streak % 7 === 0) {
         const streakResult = await db.runAsync(
           'INSERT OR IGNORE INTO habit_bonus (local_day, kind, amount, paid, created_ms) VALUES (?, ?, ?, 0, ?)',
-          [today, 'streak7', DEFAULT_HABIT_BONUS.streak7, doneMs],
+          [today, 'streak7', bonusAmounts.streak7, doneMs],
         );
         streakBonusPaid = streakResult.changes > 0;
       }
@@ -348,6 +399,38 @@ export async function getMonthHabitBonusTotal(yearMonth: string): Promise<number
     [startMs, nextStartMs],
   );
   return row?.total ?? 0;
+}
+
+/**
+ * 미지급(paid=0) habit_bonus 전체 기간 목록을 최신순으로 반환한다 (용돈 장부
+ * "미지급 우선 + 펼치기" 개편용, getUnpaidIncomeSessions와 동일한 취지 —
+ * 이번 달로 좁히면 지난달 미지급 보너스가 시야에서 사라진다).
+ */
+export async function listUnpaidHabitBonuses(): Promise<HabitBonusRow[]> {
+  const db = getUserDb();
+
+  const rows = await db.getAllAsync<{
+    id: number;
+    local_day: number;
+    kind: string;
+    amount: number;
+    paid: number;
+    created_ms: number;
+  }>(
+    `SELECT id, local_day, kind, amount, paid, created_ms
+     FROM habit_bonus
+     WHERE paid = 0
+     ORDER BY created_ms DESC`,
+  );
+
+  return rows.map((r) => ({
+    id: r.id,
+    local_day: r.local_day,
+    kind: r.kind as 'full_day' | 'streak7',
+    amount: r.amount,
+    paid: r.paid === 1,
+    created_ms: r.created_ms,
+  }));
 }
 
 /** 습관 보너스 지급 여부 토글 (부모 지급 체크, test_session.paid와 동일 개념). */
