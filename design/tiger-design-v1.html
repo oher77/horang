@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>호랑이 잉글리시 — 디자인 시안 v1</title>
+<style>
+  :root {
+    --paper: #FBF6EC; --ink: #4A3C2E; --tiger: #F5A45C; --tangerine: #E8823A;
+    --leaf: #8FAE7E; --berry: #D96D6D; --cream-line: #E7DCC8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 28px 20px 80px; background: var(--paper); color: var(--ink);
+    font-family: -apple-system, "Apple SD Gothic Neo", sans-serif;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 26px; margin: 0 0 6px; }
+  .sub { color: #8a7a63; font-size: 14px; margin-bottom: 36px; line-height: 1.6; }
+  h2 {
+    font-size: 19px; margin: 48px 0 4px; padding-bottom: 8px;
+    border-bottom: 2px dashed var(--cream-line);
+  }
+  .hint { font-size: 13px; color: #8a7a63; margin: 6px 0 18px; }
+  .cards { display: flex; flex-wrap: wrap; gap: 16px; }
+  .card {
+    background: #fff; border: 2px solid var(--cream-line); border-radius: 18px;
+    padding: 18px 16px 14px; flex: 1 1 240px; max-width: 300px; text-align: center;
+  }
+  .card .tag {
+    display: inline-block; background: var(--ink); color: #fff; border-radius: 999px;
+    font-size: 12px; font-weight: 700; padding: 3px 12px; margin-bottom: 10px;
+  }
+  .card h3 { margin: 8px 0 2px; font-size: 16px; }
+  .card p { margin: 4px 0 0; font-size: 12.5px; color: #8a7a63; line-height: 1.5; }
+  .faces { display: flex; justify-content: center; gap: 6px; align-items: flex-end; }
+  .swatches { display: flex; gap: 0; border-radius: 14px; overflow: hidden; border: 2px solid var(--cream-line); }
+  .swatch { flex: 1; height: 72px; display: flex; align-items: flex-end; justify-content: center; }
+  .swatch span { font-size: 10px; background: rgba(255,255,255,.85); border-radius: 6px 6px 0 0; padding: 2px 6px; color: #555; }
+  .mock {
+    background: #fff; border: 2px solid var(--cream-line); border-radius: 18px;
+    padding: 20px; flex: 1 1 340px; max-width: 400px;
+  }
+  .mock h3 { margin: 0 0 12px; font-size: 15px; }
+  /* 홈 습관 배너 목업 */
+  .banner {
+    background: var(--paper); border: 2px solid var(--cream-line); border-radius: 16px;
+    padding: 14px 16px; display: flex; align-items: center; gap: 14px;
+  }
+  .banner .paws { display: flex; gap: 8px; }
+  .banner .streak { margin-left: auto; font-weight: 800; font-size: 15px; }
+  /* 완료 배너 목업 */
+  .toast {
+    background: var(--ink); color: #FFF6E8; border-radius: 999px; padding: 10px 20px 10px 12px;
+    display: inline-flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px;
+    box-shadow: 0 4px 14px rgba(74,60,46,.25);
+  }
+  /* 배지 목업 */
+  .badges { display: flex; gap: 12px; align-items: center; }
+  .foot { margin-top: 56px; font-size: 13px; color: #8a7a63; line-height: 1.7;
+    border-top: 2px dashed var(--cream-line); padding-top: 18px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>🐯 호랑이 잉글리시 — 디자인 시안 v1</h1>
+<div class="sub">
+  마음에 드는 걸 골라주세요! 마스코트 하나(A/B/C) + 색깔 하나(1/2)를 고르면
+  그 조합으로 앱 전체를 꾸밉니다. 조금 바꾸고 싶은 점("A인데 눈을 더 크게" 같은)도 환영.
+</div>
+
+<h2>① 마스코트 — 호랑이 캐릭터</h2>
+<div class="hint">각 시안마다 기본 · 축하(4/4 완주) · 응원 표정입니다.</div>
+<div class="cards">
+
+  <div class="card"><span class="tag">A. 동글이</span>
+    <div class="faces">
+      <!-- A-기본 -->
+      <svg width="86" height="86" viewBox="0 0 100 100">
+        <path d="M25 18 Q20 4 33 8 Q40 11 38 19" fill="#F5A45C" stroke="#4A3C2E" stroke-width="3.2" stroke-linejoin="round"/>
+        <path d="M75 18 Q80 4 67 8 Q60 11 62 19" fill="#F5A45C" stroke="#4A3C2E" stroke-width="3.2" stroke-linejoin="round"/>
+        <path d="M50 12 Q76 11 82 34 Q88 58 74 74 Q58 88 38 82 Q18 76 15 52 Q13 28 32 16 Q40 12 50 12 Z"
+              fill="#F5A45C" stroke="#4A3C2E" stroke-width="3.5" stroke-linejoin="round"/>
+        <path d="M50 54 Q64 52 66 64 Q67 76 50 77 Q33 76 34 64 Q36 52 50 54 Z" fill="#FFF6E8"/>
+        <path d="M46 8 L50 20 L54 8 M28 26 L38 32 M72 26 L62 32" stroke="#4A3C2E" stroke-width="3" stroke-linecap="round" fill="none"/>
+        <circle cx="38" cy="44" r="3.4" fill="#4A3C2E"/><circle cx="62" cy="44" r="3.4" fill="#4A3C2E"/>
+        <path d="M46 58 Q50 61 54 58" stroke="#4A3C2E" stroke-width="2.6" stroke-linecap="round" fill="none"/>
+        <path d="M47 55 Q50 53 53 55 L50 58 Z" fill="#4A3C2E"/>
+        <circle cx="30" cy="55" r="4.5" fill="#E8823A" opacity=".45"/><circle cx="70" cy="55" r="4.5" fill="#E8823A" opacity=".45"/>
+      </svg>
+      <!-- A-축하 -->
+      <svg width="86" height="86" viewBox="0 0 100 100">
+        <path d="M12 14 L16 22 M88 14 L84 22 M8 34 L15 36 M92 34 L85 36" stroke="#E8823A" stroke-width="3" stroke-linecap="round"/>
+        <circle cx="22" cy="8" r="2.6" fill="#8FAE7E"/><circle cx="78" cy="8" r="2.6" fill="#D96D6D"/>
+        <path d="M25 20 Q20 6 33 10 Q40 13 38 21" fill="#F5A45C" stroke="#4A3C2E" stroke-width="3.2" stroke-linejoin="round"/>
+        <path d="M75 20 Q80 6 67 10 Q60 13 62 21" fill="#F5A45C" stroke="#4A3C2E" stroke-width="3.2" stroke-linejoin="round"/>
+        <path d="M50 14 Q76 13 82 36 Q88 60 74 76 Q58 90 38 84 Q18 78 15 54 Q13 30 32 18 Q40 14 50 14 Z"
+              fill="#F5A45C" stroke="#4A3C2E" stroke-width="3.5" stroke-linejoin="round"/>
+        <path d="M50 56 Q64 54 66 66 Q67 78 50 79 Q33 78 34 66 Q36 54 50 56 Z" fill="#FFF6E8"/>
+        <path d="M46 10 L50 22 L54 10 M28 28 L38 34 M72 28 L62 34" stroke="#4A3C2E" stroke-width="3" stroke-linecap="round" fill="none"/>
+        <path d="M33 46 Q38 41 43 46 M57 46 Q62 41 67 46" stroke="#4A3C2E" stroke-width="3" stroke-linecap="round" fill="none"/>
+        <path d="M44 59 Q50 66 56 59" stroke="#4A3C2E" stroke-width="2.8" stroke-linecap="round" fill="none"/>
+        <path d="M47 57 Q50 55 53 57 L50 60 Z" fill="#4A3C2E"/>
+        <circle cx="30" cy="57" r="4.5" fill="#E8823A" opacity=".55"/><circle cx="70" cy="57" r="4.5" fill="#E8823A" opacity=".55"/>
+      </svg>
+      <!-- A-응원 -->
+      <svg width="86" height="86" viewBox="0 0 100 100">
+        <path d="M25 18 Q20 4 33 8 Q40 11 38 19" fill="#F5A45C" stroke="#4A3C2E" stroke-width="3.2" stroke-linejoin="round"/>
+        <path d="M75 18 Q80 4 67 8 Q60 11 62 19" fill="#F5A45C" stroke="#4A3C2E" stroke-width="3.2" stroke-linejoin="round"/>
+        <path d="M50 12 Q76 11 82 34 Q88 58 74 74 Q58 88 38 82 Q18 76 15 52 Q13 28 32 16 Q40 12 50 12 Z"
+              fill="#F5A45C" stroke="#4A3C2E" stroke-width="3.5" stroke-linejoin="round"/>
+        <path d="M50 54 Q64 52 66 64 Q67 76 50 77 Q33 76 34 64 Q36 52 50 54 Z" fill="#FFF6E8"/>
+        <path d="M46 8 L50 20 L54 8 M28 26 L38 32 M72 26 L62 32" stroke="#4A3C2E" stroke-width="3" stroke-linecap="round" fill="none"/>
+        <path d="M33 40 L43 44 M67 40 L57 44" stroke="#4A3C2E" stroke-width="3" stroke-linecap="round"/>
+        <circle cx="39" cy="46" r="3" fill="#4A3C2E"/><circle cx="61" cy="46" r="3" fill="#4A3C2E"/>
+        <path d="M45 59 Q50 62 55 58" stroke="#4A3C2E" stroke-width="2.6" stroke-linecap="round" fill="none"/>
+        <path d="M47 55 Q50 53 53 55 L50 58 Z" fill="#4A3C2E"/>
+        <path d="M78 62 Q90 58 88 48" stroke="#4A3C2E" stroke-width="3.4" stroke-linecap="round" fill="none"/>
+        <circle cx="88" cy="45" r="5" fill="#F5A45C" stroke="#4A3C2E" stroke-width="2.6"/>
+      </svg>
+    </div>
+    <h3>동글이 호랑이</h3>
+    <p>크고 둥근 얼굴, 굵은 선. 스티커처럼 또렷해서 작은 화면에서도 잘 보여요.</p>
+  </div>
+
+  <div class="card"><span class="tag">B. 크레용</span>
+    <div class="faces">
+      <!-- B-기본 (전신) -->
+      <svg width="86" height="86" viewBox="0 0 100 100">
+        <g stroke-linecap="round" fill="none">
+          <path d="M50 30 Q68 29 71 44 Q73 58 60 62 Q68 64 70 74 Q71 84 50 85 Q29 84 30 74 Q32 64 40 62 Q27 58 29 44 Q32 29 50 30" stroke="#E8823A" stroke-width="5" opacity=".85"/>
+          <path d="M51 31 Q67 31 70 44 Q72 57 59 61 Q67 64 69 74 Q70 83 50 84 Q30 83 31 74 Q33 64 41 61 Q28 57 30 45 Q33 31 51 31" stroke="#F5A45C" stroke-width="3.4" opacity=".9"/>
+          <path d="M36 32 Q33 24 40 25 M64 32 Q67 24 60 25" stroke="#E8823A" stroke-width="4.6"/>
+          <path d="M42 40 Q44 38 46 40 M54 40 Q56 38 58 40" stroke="#4A3C2E" stroke-width="3.2"/>
+          <path d="M48 48 Q50 50 52 48" stroke="#4A3C2E" stroke-width="2.8"/>
+          <path d="M39 51 Q35 52 33 50 M61 51 Q65 52 67 50" stroke="#4A3C2E" stroke-width="2.2" opacity=".8"/>
+          <path d="M43 70 Q42 76 44 79 M57 70 Q58 76 56 79" stroke="#E8823A" stroke-width="4.2" opacity=".8"/>
+          <path d="M70 68 Q82 66 80 56" stroke="#E8823A" stroke-width="4.6"/>
+          <path d="M45 34 L47 30 M53 34 L55 30" stroke="#4A3C2E" stroke-width="2.4" opacity=".75"/>
+        </g>
+      </svg>
+      <!-- B-축하 -->
+      <svg width="86" height="86" viewBox="0 0 100 100">
+        <g stroke-linecap="round" fill="none">
+          <path d="M18 20 L22 27 M82 20 L78 27 M14 40 L21 41 M86 40 L79 41" stroke="#8FAE7E" stroke-width="3.4"/>
+          <path d="M50 32 Q68 31 71 46 Q73 60 60 64 Q68 66 70 76 Q71 86 50 87 Q29 86 30 76 Q32 66 40 64 Q27 60 29 46 Q32 31 50 32" stroke="#E8823A" stroke-width="5" opacity=".85"/>
+          <path d="M36 34 Q33 26 40 27 M64 34 Q67 26 60 27" stroke="#E8823A" stroke-width="4.6"/>
+          <path d="M41 42 Q44 39 47 42 M53 42 Q56 39 59 42" stroke="#4A3C2E" stroke-width="3"/>
+          <path d="M46 49 Q50 54 54 49" stroke="#4A3C2E" stroke-width="2.8"/>
+          <path d="M32 24 Q38 14 44 22 M68 24 Q62 14 56 22" stroke="#F5A45C" stroke-width="4.2"/>
+        </g>
+      </svg>
+      <!-- B-응원 -->
+      <svg width="86" height="86" viewBox="0 0 100 100">
+        <g stroke-linecap="round" fill="none">
+          <path d="M50 30 Q68 29 71 44 Q73 58 60 62 Q68 64 70 74 Q71 84 50 85 Q29 84 30 74 Q32 64 40 62 Q27 58 29 44 Q32 29 50 30" stroke="#E8823A" stroke-width="5" opacity=".85"/>
+          <path d="M36 32 Q33 24 40 25 M64 32 Q67 24 60 25" stroke="#E8823A" stroke-width="4.6"/>
+          <path d="M42 39 L46 41 M58 39 L54 41" stroke="#4A3C2E" stroke-width="3"/>
+          <path d="M47 48 Q50 50 53 47" stroke="#4A3C2E" stroke-width="2.8"/>
+          <path d="M33 62 Q22 58 24 48" stroke="#E8823A" stroke-width="4.6"/>
+          <path d="M22 46 Q24 42 28 44" stroke="#F5A45C" stroke-width="4.2"/>
+        </g>
+      </svg>
+    </div>
+    <h3>크레용 호랑이</h3>
+    <p>색연필로 슥슥 그린 느낌의 전신 꼬마 호랑이. 선이 두 겹이라 따뜻하고 포근해요.</p>
+  </div>
+
+  <div class="card"><span class="tag">C. 선화</span>
+    <div class="faces">
+      <!-- C-기본 -->
+      <svg width="86" height="86" viewBox="0 0 100 100">
+        <g stroke="#4A3C2E" stroke-width="2.4" stroke-linecap="round" fill="none">
+          <path d="M26 22 Q24 10 34 13 M74 22 Q76 10 66 13"/>
+          <path d="M50 14 Q74 15 79 38 Q83 60 68 73 Q52 84 36 76 Q20 68 19 46 Q19 24 40 15 Q45 14 50 14"/>
+          <path d="M44 12 L49 21 L54 12 M30 30 L39 34 M70 30 L61 34"/>
+          <path d="M38 45 Q40 43 42 45 M58 45 Q60 43 62 45"/>
+          <path d="M47 56 Q50 59 53 56 M50 52 L50 56"/>
+          <path d="M36 58 L28 57 M36 62 L29 63 M64 58 L72 57 M64 62 L71 63" stroke-width="1.8"/>
+        </g>
+        <circle cx="33" cy="52" r="4" fill="#F5A45C" opacity=".5"/><circle cx="67" cy="52" r="4" fill="#F5A45C" opacity=".5"/>
+      </svg>
+      <!-- C-축하 -->
+      <svg width="86" height="86" viewBox="0 0 100 100">
+        <g stroke="#4A3C2E" stroke-width="2.4" stroke-linecap="round" fill="none">
+          <path d="M26 24 Q24 12 34 15 M74 24 Q76 12 66 15"/>
+          <path d="M50 16 Q74 17 79 40 Q83 62 68 75 Q52 86 36 78 Q20 70 19 48 Q19 26 40 17 Q45 16 50 16"/>
+          <path d="M44 14 L49 23 L54 14 M30 32 L39 36 M70 32 L61 36"/>
+          <path d="M35 46 Q39 41 43 46 M57 46 Q61 41 65 46"/>
+          <path d="M45 57 Q50 63 55 57"/>
+          <path d="M15 18 L19 24 M85 18 L81 24 M12 36 L18 37 M88 36 L82 37" stroke="#E8823A" stroke-width="2.6"/>
+        </g>
+        <circle cx="33" cy="54" r="4" fill="#F5A45C" opacity=".6"/><circle cx="67" cy="54" r="4" fill="#F5A45C" opacity=".6"/>
+      </svg>
+      <!-- C-응원 -->
+      <svg width="86" height="86" viewBox="0 0 100 100">
+        <g stroke="#4A3C2E" stroke-width="2.4" stroke-linecap="round" fill="none">
+          <path d="M26 22 Q24 10 34 13 M74 22 Q76 10 66 13"/>
+          <path d="M50 14 Q74 15 79 38 Q83 60 68 73 Q52 84 36 76 Q20 68 19 46 Q19 24 40 15 Q45 14 50 14"/>
+          <path d="M44 12 L49 21 L54 12 M30 30 L39 34 M70 30 L61 34"/>
+          <path d="M36 42 L43 45 M64 42 L57 45"/>
+          <circle cx="40" cy="47" r="1.6" fill="#4A3C2E"/><circle cx="60" cy="47" r="1.6" fill="#4A3C2E"/>
+          <path d="M46 57 Q50 60 54 56"/>
+          <path d="M76 60 Q88 56 86 46 M83 43 Q86 40 89 43"/>
+        </g>
+        <circle cx="33" cy="52" r="4" fill="#F5A45C" opacity=".5"/><circle cx="67" cy="52" r="4" fill="#F5A45C" opacity=".5"/>
+      </svg>
+    </div>
+    <h3>선화 호랑이</h3>
+    <p>펜으로 슥 그린 낙서 스타일 + 볼터치만 살짝. 깔끔하고 어른스러운 손그림 느낌.</p>
+  </div>
+</div>
+
+<h2>② 색 팔레트</h2>
+<div class="hint">앱 전체 배경·버튼·배지에 쓰일 색 조합입니다.</div>
+<div class="cards">
+  <div class="card" style="max-width:400px">
+    <span class="tag">1. 귤빛 크림</span>
+    <div class="swatches">
+      <div class="swatch" style="background:#FBF6EC"><span>종이</span></div>
+      <div class="swatch" style="background:#F5A45C"><span>호랑이</span></div>
+      <div class="swatch" style="background:#E8823A"><span>귤</span></div>
+      <div class="swatch" style="background:#8FAE7E"><span>잎</span></div>
+      <div class="swatch" style="background:#D96D6D"><span>딸기</span></div>
+      <div class="swatch" style="background:#4A3C2E"><span>먹</span></div>
+    </div>
+    <p>따뜻한 크림 종이 + 귤빛. 이 페이지 전체가 이 팔레트로 칠해져 있어요.</p>
+  </div>
+  <div class="card" style="max-width:400px">
+    <span class="tag">2. 파스텔 숲</span>
+    <div class="swatches">
+      <div class="swatch" style="background:#F4F7F2"><span>안개</span></div>
+      <div class="swatch" style="background:#A8D8C8"><span>민트</span></div>
+      <div class="swatch" style="background:#F6C9A8"><span>복숭아</span></div>
+      <div class="swatch" style="background:#C9BEE3"><span>라벤더</span></div>
+      <div class="swatch" style="background:#EE9B8A"><span>산호</span></div>
+      <div class="swatch" style="background:#4E5A54"><span>이끼</span></div>
+    </div>
+    <p>차분한 파스텔 톤. 호랑이 주황은 포인트로만 쓰여 은은한 분위기.</p>
+  </div>
+</div>
+
+<h2>③ 앱 속 모습 (팔레트 1 기준 미리보기)</h2>
+<div class="hint">고른 마스코트·팔레트가 실제 화면 요소에 이렇게 들어갑니다.</div>
+<div class="cards">
+
+  <div class="mock">
+    <h3>홈 — 하루 4번 인출 게이지 (발자국 버전)</h3>
+    <div class="banner">
+      <div class="paws">
+        <!-- 채워진 발자국 x2 -->
+        <svg width="34" height="34" viewBox="0 0 40 40"><g fill="#E8823A"><ellipse cx="20" cy="25" rx="9" ry="7.5"/><circle cx="9" cy="16" r="3.4"/><circle cx="16" cy="11" r="3.4"/><circle cx="24" cy="11" r="3.4"/><circle cx="31" cy="16" r="3.4"/></g></svg>
+        <svg width="34" height="34" viewBox="0 0 40 40"><g fill="#E8823A"><ellipse cx="20" cy="25" rx="9" ry="7.5"/><circle cx="9" cy="16" r="3.4"/><circle cx="16" cy="11" r="3.4"/><circle cx="24" cy="11" r="3.4"/><circle cx="31" cy="16" r="3.4"/></g></svg>
+        <!-- 진행 중(점선 테두리) -->
+        <svg width="34" height="34" viewBox="0 0 40 40"><g fill="none" stroke="#E8823A" stroke-width="2.4" stroke-dasharray="3 3"><ellipse cx="20" cy="25" rx="9" ry="7.5"/><circle cx="9" cy="16" r="3.4"/><circle cx="16" cy="11" r="3.4"/><circle cx="24" cy="11" r="3.4"/><circle cx="31" cy="16" r="3.4"/></g></svg>
+        <!-- 비어있는 발자국 -->
+        <svg width="34" height="34" viewBox="0 0 40 40"><g fill="#E7DCC8"><ellipse cx="20" cy="25" rx="9" ry="7.5"/><circle cx="9" cy="16" r="3.4"/><circle cx="16" cy="11" r="3.4"/><circle cx="24" cy="11" r="3.4"/><circle cx="31" cy="16" r="3.4"/></g></svg>
+      </div>
+      <div class="streak">🔥 5일 연속</div>
+    </div>
+    <p style="font-size:12.5px;color:#8a7a63">● 대신 호랑이 발자국. 지금 열려 있는 시간대는 점선으로 표시.</p>
+  </div>
+
+  <div class="mock">
+    <h3>단어장 — 인출 완료 배너</h3>
+    <div class="toast">
+      <svg width="30" height="30" viewBox="0 0 100 100">
+        <path d="M25 20 Q20 6 33 10 Q40 13 38 21" fill="#F5A45C"/>
+        <path d="M75 20 Q80 6 67 10 Q60 13 62 21" fill="#F5A45C"/>
+        <circle cx="50" cy="50" r="36" fill="#F5A45C"/>
+        <path d="M50 56 Q62 54 64 64 Q65 74 50 75 Q35 74 36 64 Q38 54 50 56 Z" fill="#FFF6E8"/>
+        <path d="M33 42 Q38 37 43 42 M57 42 Q62 37 67 42" stroke="#4A3C2E" stroke-width="4" stroke-linecap="round" fill="none"/>
+        <path d="M44 60 Q50 66 56 60" stroke="#4A3C2E" stroke-width="3.6" stroke-linecap="round" fill="none"/>
+      </svg>
+      이번 슬롯 인출 완료!
+    </div>
+    <div class="toast" style="margin-top:10px;background:#E8823A">
+      <svg width="30" height="30" viewBox="0 0 100 100">
+        <path d="M25 20 Q20 6 33 10 Q40 13 38 21" fill="#FFF6E8"/>
+        <path d="M75 20 Q80 6 67 10 Q60 13 62 21" fill="#FFF6E8"/>
+        <circle cx="50" cy="50" r="36" fill="#FFF6E8"/>
+        <path d="M33 42 Q38 37 43 42 M57 42 Q62 37 67 42" stroke="#4A3C2E" stroke-width="4" stroke-linecap="round" fill="none"/>
+        <path d="M44 58 Q50 65 56 58" stroke="#4A3C2E" stroke-width="3.6" stroke-linecap="round" fill="none"/>
+      </svg>
+      오늘 4번 다 했다! +200원 🎉
+    </div>
+    <p style="font-size:12.5px;color:#8a7a63;margin-top:10px">완료 순간 호랑이가 함께 뜹니다. 4/4 완주는 특별 버전.</p>
+  </div>
+
+  <div class="mock">
+    <h3>단어장 — 기억 단계 배지 (크레용 버전)</h3>
+    <div class="badges">
+      <svg width="30" height="30" viewBox="0 0 36 36"><circle cx="18" cy="18" r="14" fill="#FFE9B3"/><circle cx="18" cy="18" r="14" fill="none" stroke="#E8B75A" stroke-width="2.4" stroke-dasharray="5 2.5" transform="rotate(12 18 18)"/><text x="18" y="23" font-size="14" font-weight="800" text-anchor="middle" fill="#4A3C2E">1</text></svg>
+      <svg width="30" height="30" viewBox="0 0 36 36"><circle cx="18" cy="18" r="14" fill="#FFD48A"/><circle cx="18" cy="18" r="14" fill="none" stroke="#E8A24E" stroke-width="2.4" stroke-dasharray="5 2.5" transform="rotate(40 18 18)"/><text x="18" y="23" font-size="14" font-weight="800" text-anchor="middle" fill="#4A3C2E">2</text></svg>
+      <svg width="30" height="30" viewBox="0 0 36 36"><circle cx="18" cy="18" r="14" fill="#F5A45C"/><circle cx="18" cy="18" r="14" fill="none" stroke="#D9822F" stroke-width="2.4" stroke-dasharray="5 2.5" transform="rotate(70 18 18)"/><text x="18" y="23" font-size="14" font-weight="800" text-anchor="middle" fill="#fff">3</text></svg>
+      <svg width="30" height="30" viewBox="0 0 36 36"><circle cx="18" cy="18" r="14" fill="#E8823A"/><circle cx="18" cy="18" r="14" fill="none" stroke="#C4651F" stroke-width="2.4" stroke-dasharray="5 2.5" transform="rotate(100 18 18)"/><text x="18" y="23" font-size="14" font-weight="800" text-anchor="middle" fill="#fff">4</text></svg>
+      <svg width="30" height="30" viewBox="0 0 36 36"><circle cx="18" cy="18" r="14" fill="#D96D6D"/><circle cx="18" cy="18" r="14" fill="none" stroke="#B34D4D" stroke-width="2.4" stroke-dasharray="5 2.5" transform="rotate(130 18 18)"/><text x="18" y="23" font-size="14" font-weight="800" text-anchor="middle" fill="#fff">5</text></svg>
+    </div>
+    <p style="font-size:12.5px;color:#8a7a63;margin-top:12px">테두리가 크레용으로 칠한 듯 삐뚤빼뚤. 단계가 오를수록 색이 진해지는 건 지금과 동일.</p>
+  </div>
+
+</div>
+
+<div class="foot">
+  <b>고르는 법</b> — ① 마스코트 A/B/C 중 하나, ② 팔레트 1/2 중 하나, ③ 바꾸고 싶은 점 자유롭게.<br>
+  선택하면: 홈 습관 배너·완료 배너·배지부터 적용하고, 이후 화면 전체 테마 → (배포 때) 앱 아이콘·스플래시까지 같은 호랑이로 통일합니다.
+</div>
+
+</div>
+</body>
+</html>

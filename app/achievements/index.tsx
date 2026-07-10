@@ -324,7 +324,7 @@ function RecentScoresSection({ scores, error }: { scores: RecentScore[] | null; 
                   <View style={[styles.barFill, { height: barHeight }]} />
                 </View>
                 <Text style={styles.barDateLabel}>
-                  {epochDayToDateString(toEpochDay(new Date(item.taken_ms))).slice(5)}
+                  {shortDateLabel(toEpochDay(new Date(item.taken_ms)))}
                 </Text>
               </View>
             );
@@ -379,9 +379,16 @@ function ScaryWordsSection({
 /**
  * WordsIn/WordsOut 공용 일별 30일 추이 막대 그래프 (View 기반, 라이브러리 없음).
  * y스케일은 시리즈 최댓값 기준 정규화하고, 최댓값이 0이면 플레이스홀더 텍스트로
- * 대체한다. 값 라벨은 마지막(오늘) 막대 위에만, 날짜 라벨은 첫날/중간/오늘만 표시해
- * 30개 막대가 화면 폭에 가로 스크롤 없이 들어가게 한다.
+ * 대체한다. 값 라벨은 마지막(오늘) 막대 위에만 표시한다. 날짜 라벨은 막대 슬롯
+ * (화면폭÷30 ≈ 12px)에 넣으면 말줄임돼 "0…"로 보이므로, 차트 아래 별도 행에
+ * 첫날/중간/오늘 3개만 좌/중/우 정렬로 표시한다.
  */
+/** epoch day → "7/10" 축약 날짜 라벨 (앞자리 0 제거). */
+function shortDateLabel(day: number): string {
+  const [, month, date] = epochDayToDateString(day).split('-');
+  return `${Number(month)}/${Number(date)}`;
+}
+
 function DailyTrendBarChart({
   points,
   valueOf,
@@ -401,24 +408,31 @@ function DailyTrendBarChart({
   const midIndex = Math.floor((points.length - 1) / 2);
 
   return (
-    <View style={styles.trendRow}>
-      {points.map((p, index) => {
-        const value = valueOf(p);
-        const barHeight = value > 0 ? Math.max((value / max) * TREND_MAX_HEIGHT, 2) : 0;
-        const isLast = index === points.length - 1;
-        const showDateLabel = index === 0 || index === midIndex || isLast;
-        return (
-          <View key={p.day} style={styles.trendBarItem}>
-            <Text style={styles.trendValueLabel}>{isLast ? value : ''}</Text>
-            <View style={styles.trendBarTrack}>
-              <View style={[styles.trendBarFill, { height: barHeight, backgroundColor: color }]} />
+    <View>
+      <View style={styles.trendRow}>
+        {points.map((p, index) => {
+          const value = valueOf(p);
+          const barHeight = value > 0 ? Math.max((value / max) * TREND_MAX_HEIGHT, 2) : 0;
+          const isLast = index === points.length - 1;
+          return (
+            <View key={p.day} style={styles.trendBarItem}>
+              {/* 마지막 슬롯 폭(~12px)에 갇히면 숫자가 잘리므로, 고정폭 우측정렬로
+                  차트 안쪽(왼쪽)을 향해 넘치게 한다. */}
+              <Text style={[styles.trendValueLabel, isLast && styles.trendValueLabelLast]}>
+                {isLast ? value : ''}
+              </Text>
+              <View style={styles.trendBarTrack}>
+                <View style={[styles.trendBarFill, { height: barHeight, backgroundColor: color }]} />
+              </View>
             </View>
-            <Text style={styles.trendDateLabel} numberOfLines={1}>
-              {showDateLabel ? epochDayToDateString(p.day).slice(5) : ''}
-            </Text>
-          </View>
-        );
-      })}
+          );
+        })}
+      </View>
+      <View style={styles.trendDateRow}>
+        <Text style={styles.trendDateLabel}>{shortDateLabel(points[0].day)}</Text>
+        <Text style={styles.trendDateLabel}>{shortDateLabel(points[midIndex].day)}</Text>
+        <Text style={styles.trendDateLabel}>{shortDateLabel(points[points.length - 1].day)}</Text>
+      </View>
     </View>
   );
 }
@@ -426,8 +440,8 @@ function DailyTrendBarChart({
 function WordsInSection({ trend, error }: { trend: WordStatePoint[] | null; error: string | null }) {
   return (
     <View style={styles.section}>
-      <Text style={styles.sectionTitle}>머리에 들어온 단어</Text>
-
+      <Text style={styles.sectionTitle}>머리에 쏘옥~ 들어온 단어</Text>
+      <Text style={styles.sectionSubtitle}>늘어나는 어휘력 늘어나는 영어 실력</Text> 
       {error && <Text style={styles.error}>{error}</Text>}
 
       {!error && !trend && <ActivityIndicator style={styles.loading} />}
@@ -441,7 +455,7 @@ function WordsOutSection({ trend, error }: { trend: WordStatePoint[] | null; err
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>아직 안 외워진 단어</Text>
-      <Text style={styles.sectionSubtitle}>줄어드는 구간이 보이면 칭찬 타이밍!</Text>
+      {/* <Text style={styles.sectionSubtitle}>늘어나기 마련인데 줄어들고 있다고? 굉장한 아이로군!</Text> */}
 
       {error && <Text style={styles.error}>{error}</Text>}
 
@@ -745,8 +759,18 @@ const styles = StyleSheet.create({
     marginBottom: 2,
     height: 14,
   },
-  trendDateLabel: {
+  trendValueLabelLast: {
+    width: 44,
+    textAlign: 'right',
+    alignSelf: 'flex-end',
+  },
+
+  trendDateRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     marginTop: 4,
+  },
+  trendDateLabel: {
     fontSize: 9,
     color: '#999',
   },

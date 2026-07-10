@@ -1,6 +1,6 @@
 import { router, Stack, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { epochDayToDateString, todayEpochDay } from '../lib/dates';
 import { currentSlotIndex, getCurrentStreak, getTodaySlots } from '../lib/habitQueries';
@@ -9,7 +9,7 @@ import { ensureTodayDay, type DayWithWords } from '../lib/queries';
 const TOTAL_SLOTS = 4;
 
 export default function Index() {
-  const [today] = useState(() => epochDayToDateString(todayEpochDay()));
+  const [today, setToday] = useState(() => epochDayToDateString(todayEpochDay()));
   const [day, setDay] = useState<DayWithWords | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -18,8 +18,12 @@ export default function Index() {
   const [streak, setStreak] = useState(0);
   const [activeSlot, setActiveSlot] = useState<number | null>(null);
 
-  const loadTodayDay = useCallback(() => {
-    setLoading(true);
+  // silent=true면 스피너 없이 갱신 (focus/포그라운드 복귀 — 이미 화면에 내용이 있음).
+  // 앱을 켜둔 채 자정을 넘기면 마운트가 다시 일어나지 않으므로, ensureTodayDay를
+  // 마운트 1회가 아니라 복귀 시점마다 재실행해야 새 Day가 생성된다 (멱등이라 안전).
+  const loadTodayDay = useCallback((opts?: { silent?: boolean }) => {
+    setToday(epochDayToDateString(todayEpochDay()));
+    if (!opts?.silent) setLoading(true);
     setError(null);
     ensureTodayDay()
       .then(setDay)
@@ -44,11 +48,25 @@ export default function Index() {
   }, [loadTodayDay]);
 
   // 단어장 화면에서 돌아올 때 게이지 갱신 필요(§7.3) — focus 시마다 재조회.
+  // 오늘 Day·날짜 라벨도 함께 갱신 (다른 화면에 머무는 사이 자정을 넘긴 경우 대응).
   useFocusEffect(
     useCallback(() => {
       loadHabit();
-    }, [loadHabit]),
+      loadTodayDay({ silent: true });
+    }, [loadHabit, loadTodayDay]),
   );
+
+  // 앱을 홈 화면에 둔 채 백그라운드로 갔다가 다음 날 복귀하는 경우 — focus 이벤트가
+  // 없으므로 AppState active 복귀에서도 갱신해야 새 단어장이 생성된다.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        loadHabit();
+        loadTodayDay({ silent: true });
+      }
+    });
+    return () => sub.remove();
+  }, [loadHabit, loadTodayDay]);
 
   return (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.container}>
