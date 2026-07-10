@@ -56,7 +56,11 @@ export default function ReviewScreen() {
               onPress={() =>
                 router.push({
                   pathname: '/day/[dayId]',
-                  params: { dayId: String(item.id), dayIndex: String(item.day_index) },
+                  params: {
+                    dayId: String(item.id),
+                    dayIndex: String(item.day_index),
+                    initialMode: 'retrieval',
+                  },
                 })
               }
             >

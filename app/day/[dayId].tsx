@@ -57,10 +57,13 @@ type ColumnKey = 'word' | 'meaning';
 type StudyMode = 'study' | 'retrieval';
 
 export default function DayScreen() {
-  const { dayId, dayIndex: dayIndexParam } = useLocalSearchParams<{
+  const { dayId, dayIndex: dayIndexParam, initialMode } = useLocalSearchParams<{
     dayId: string;
     dayIndex?: string;
+    initialMode?: string;
   }>();
+  // 복습 메뉴에서 진입하면 인출모드로 시작 (2026-07-11 사용자 요청). 그 외(홈 등)는 학습모드.
+  const startInRetrieval = initialMode === 'retrieval';
   const [words, setWords] = useState<DayWordRowData[] | null>(null);
   // 호출측(홈/복습)이 이미 아는 Day 번호를 param으로 넘겨주면 첫 프레임부터 제 타이틀로
   // 시작한다 (DB 조회 대기 중 대체 타이틀이 깜빡이는 것 방지). param 없이 열린 경우만
@@ -80,14 +83,16 @@ export default function DayScreen() {
   const [sheetDetail, setSheetDetail] = useState<WordDetail | null>(null);
 
   // 컬럼 전체 가림 토글 (헤더 눈아이콘). 화면 로컬 UI 상태 — DB 미저장(설계.md §4.5).
+  // 인출모드로 시작하면 handleModeChange와 동일하게 뜻 컬럼을 초기부터 가린다.
   const [columnHidden, setColumnHidden] = useState<Record<ColumnKey, boolean>>({
     word: false,
-    meaning: false,
+    meaning: startInRetrieval,
   });
 
-  // 학습/인출모드 토글 — 기본 학습모드. 인출모드 진입 시 뜻 컬럼을 일괄 가림(설계.md §4.5, §7.3).
+  // 학습/인출모드 토글 — 기본 학습모드, 단 복습 메뉴에서 진입(initialMode=retrieval)하면
+  // 인출모드로 시작한다. 인출모드 진입 시 뜻 컬럼을 일괄 가림(설계.md §4.5, §7.3).
   // 이후 눈 아이콘 수동 조작은 모드와 독립(단방향 세팅).
-  const [mode, setMode] = useState<StudyMode>('study');
+  const [mode, setMode] = useState<StudyMode>(startInRetrieval ? 'retrieval' : 'study');
   // 인출모드 카운트다운 라인바 진행도 (1=가득 참 → 0=소진). mode==='retrieval'일 때만 렌더.
   const lineBarProgress = useSharedValue(0);
   // 인출모드 시간 임박 사이렌 표시 여부 — 리스트 밖 형제 노드로 렌더해 renderItem deps에
