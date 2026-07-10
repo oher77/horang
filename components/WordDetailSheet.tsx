@@ -8,9 +8,8 @@
  * - reanimated로 진입 시 아래→위 슬라이드업, 닫을 때 위→아래 슬라이드다운.
  * - gesture-handler Pan으로 시트를 아래로 드래그하면 임계값 이상 시 닫힘.
  *
- * TTS 버튼은 DayWordRow와 동일한 Gesture.Tap 기반 스피커 버튼을 재사용하지 않고
- * (요구사항 3 취소로 DayWordRow의 TtsButton 구조는 손대지 않기로 함) 이 시트
- * 전용의 작은 스피커 버튼을 자체 렌더링한다.
+ * TTS는 이 시트 전용의 작은 스피커 버튼을 자체 렌더링한다 (DayWordRow의 행 내
+ * 스피커 버튼은 2026-07-11 제거되고 단어 셀 탭 재생으로 대체됨 — 여기와 무관).
  */
 
 import * as Speech from 'expo-speech';

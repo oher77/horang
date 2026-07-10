@@ -10,6 +10,8 @@ import Animated, {
   FadeOut,
   useAnimatedStyle,
   useSharedValue,
+  withRepeat,
+  withSequence,
   withTiming,
   type SharedValue,
 } from 'react-native-reanimated';
@@ -46,6 +48,10 @@ const BANNER_DURATION_MS = 2000; // 완료 피드백 배너 표시 시간
 
 // 인출모드 카운트다운 라인바 상수 (설계.md §7.3)
 const COUNTDOWN_MS_PER_WORD = 5000; // 단어수 × 5초
+// 인출모드 시간 임박 사이렌 (2026-07-11 사용자 요청) — 남은 시간이 이 값 이하로 떨어지는
+// 순간 트리거, SIREN_DURATION_MS 동안 표시 후 자동으로 사라진다.
+const SIREN_AT_REMAINING_MS = 10_000;
+const SIREN_DURATION_MS = 1400;
 
 type ColumnKey = 'word' | 'meaning';
 type StudyMode = 'study' | 'retrieval';
@@ -84,6 +90,9 @@ export default function DayScreen() {
   const [mode, setMode] = useState<StudyMode>('study');
   // 인출모드 카운트다운 라인바 진행도 (1=가득 참 → 0=소진). mode==='retrieval'일 때만 렌더.
   const lineBarProgress = useSharedValue(0);
+  // 인출모드 시간 임박 사이렌 표시 여부 — 리스트 밖 형제 노드로 렌더해 renderItem deps에
+  // 넣지 않는다(넣으면 사이렌 토글 때 전 행이 리렌더됨).
+  const [sirenVisible, setSirenVisible] = useState(false);
 
   // 개별 셀 "잠깐 보이기" — dayWordId별로 컬럼 peek 타이머 관리
   const [peekMap, setPeekMap] = useState<Record<number, Partial<Record<ColumnKey, boolean>>>>({});
@@ -307,10 +316,30 @@ export default function DayScreen() {
     if (mode !== 'retrieval' || wordCount === 0) return;
     cancelAnimation(lineBarProgress);
     lineBarProgress.value = 1;
+    const duration = wordCount * COUNTDOWN_MS_PER_WORD;
     lineBarProgress.value = withTiming(0, {
-      duration: wordCount * COUNTDOWN_MS_PER_WORD,
+      duration,
       easing: Easing.linear,
     });
+
+    // 시간 임박 사이렌 — 남은 시간이 SIREN_AT_REMAINING_MS 이하가 되는 시점에 표시,
+    // SIREN_DURATION_MS 후 자동으로 사라진다. 총 길이가 임계 이하면 예약하지 않는다.
+    let showTimer: ReturnType<typeof setTimeout> | null = null;
+    let hideTimer: ReturnType<typeof setTimeout> | null = null;
+    if (duration > SIREN_AT_REMAINING_MS) {
+      showTimer = setTimeout(() => {
+        setSirenVisible(true);
+        hideTimer = setTimeout(() => {
+          setSirenVisible(false);
+        }, SIREN_DURATION_MS);
+      }, duration - SIREN_AT_REMAINING_MS);
+    }
+
+    return () => {
+      if (showTimer) clearTimeout(showTimer);
+      if (hideTimer) clearTimeout(hideTimer);
+      setSirenVisible(false);
+    };
   }, [mode, wordCount, lineBarProgress]);
 
   // 모드 전환 — 인출모드 진입 시 뜻 컬럼만 가림(단어 컬럼은 그대로). 이후 눈 아이콘 수동
@@ -465,7 +494,6 @@ export default function DayScreen() {
               onToggle={() => toggleColumn('word')}
               style={styles.wordCell}
             />
-            <View style={styles.speakerButton} />
             <HeaderEyeCell
               label="뜻"
               hidden={columnHidden.meaning}
@@ -496,6 +524,8 @@ export default function DayScreen() {
           />
         </>
       )}
+
+      {mode === 'retrieval' && sirenVisible && <RetrievalSiren />}
 
       <WordDetailSheet
         visible={sheetVisible}
@@ -549,6 +579,38 @@ function RetrievalCountdownBar({ progress }: { progress: SharedValue<number> }) 
   return (
     <View style={styles.countdownTrack}>
       <Animated.View style={[styles.countdownFill, fillStyle]} />
+    </View>
+  );
+}
+
+// 인출모드 시간 임박 사이렌 (2026-07-11 사용자 요청) — 리스트 위 화면 중앙에 절대배치,
+// pointerEvents="none"으로 행 탭/스와이프를 방해하지 않는다. 등장·퇴장은 페이드 없이 즉시.
+function RetrievalSiren() {
+  const rotate = useSharedValue(0);
+
+  useEffect(() => {
+    rotate.value = withRepeat(
+      withSequence(
+        withTiming(-8, { duration: 80 }),
+        withTiming(8, { duration: 80 }),
+      ),
+      -1,
+      true,
+    );
+    return () => {
+      cancelAnimation(rotate);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const iconStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${rotate.value}deg` }],
+  }));
+
+  return (
+    <View style={styles.sirenOverlay} pointerEvents="none">
+      <Animated.Text style={[styles.sirenIcon, iconStyle]}>🚨</Animated.Text>
+      <Text style={styles.sirenText}>비상비상!</Text>
     </View>
   );
 }
@@ -618,10 +680,7 @@ const styles = StyleSheet.create({
     color: '#999',
   },
   wordCell: {
-    width: 100,
-  },
-  speakerButton: {
-    width: 32,
+    width: 132,
   },
   meaningCell: {
     flex: 1,
@@ -677,5 +736,23 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     textAlign: 'center',
+  },
+  sirenOverlay: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sirenIcon: {
+    fontSize: 56,
+  },
+  sirenText: {
+    marginTop: 4,
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#c0392b',
   },
 });

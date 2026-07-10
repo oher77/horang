@@ -2,9 +2,12 @@
  * 단어장 학습 화면의 행 컴포넌트.
  *
  * - 좌/우 스와이프: recall_stage 증감(우=+1, 좌=-1), user.db에 즉시 영속.
- * - 셀 탭: word/meaning 컬럼이 가려진 상태일 때 탭하면 잠깐 보여준다(§4.5 개별 가림 재사용).
- *   가려지지 않은 상태에서 탭하면 예문 바텀시트를 연다(onOpenDetail) — peek와 배타적 트리거.
- * - 스피커 버튼: expo-speech TTS로 영단어 발음 (Speech.stop() 후 speak() — 중복 재생 방지).
+ * - 뜻 셀 탭: 가려진 상태(peek 중 아님)면 잠깐 보여준다(§4.5 개별 가림 재사용). 그 외
+ *   (안 가려짐 또는 peek로 보이는 중)에는 예문 바텀시트를 연다(onOpenDetail) — 즉 peek로
+ *   보이는 동안 다시 탭하면 시트가 열린다. 바텀시트 트리거는 뜻 셀 전용.
+ * - 단어 셀 탭: 가려진 상태(peek 중 아님)면 잠깐 보여준다. 그 외에는 TTS로 발음 재생
+ *   (Speech.stop() 후 speak() — 중복 재생 방지). 단어 셀 탭으로는 바텀시트를 열지 않는다.
+ *   재생 중에는 단어 셀에 연한 파란 배경으로 시각 피드백을 준다.
  *
  * 성능: React.memo + 얕은 비교로 다른 행의 리렌더를 유발하지 않는다. 애니메이션은
  * reanimated shared value로 UI 스레드에서 처리되어 JS 리렌더를 유발하지 않는다.
@@ -45,11 +48,10 @@ interface DayWordRowProps {
   onSwipeStage: (dayWordId: number, delta: number) => void;
   onTapCell: (dayWordId: number, column: 'word' | 'meaning') => void;
   /**
-   * 예문 바텀시트 오픈 트리거 (사용자 확정 UX). word/meaning 셀이 "가려지지
-   * 않은 상태"에서의 탭은 기존에 아무 동작도 없었으므로(hidden일 때만 peek
-   * 동작) 그 빈 인터랙션을 시트 오픈으로 재활용한다 — peek 탭(가려진 셀 탭)과
-   * 명확히 배타적이라 충돌이 없고, 스와이프(Pan)는 activeOffsetX로 별도 처리돼
-   * 간섭하지 않는다.
+   * 예문 바텀시트 오픈 트리거 (사용자 확정 UX, 2026-07-11 재조정: 뜻 셀 전용).
+   * 뜻 셀이 "가려지지 않았거나 peek로 보이는 중"일 때 탭하면 호출된다. 단어
+   * 셀 탭은 같은 조건에서 TTS 재생으로 쓰이므로 이 트리거를 호출하지 않는다.
+   * 스와이프(Pan)는 activeOffsetX로 별도 처리돼 간섭하지 않는다.
    */
   onOpenDetail: (contentWordId: number) => void;
 }
@@ -128,20 +130,20 @@ function DayWordRowImpl({
   }, [item.headword]);
 
   const handleTapWord = useCallback(() => {
-    if (wordHidden) {
-      onTapCell(item.id, 'word'); // 가려진 상태 탭 = 기존 peek 유지
+    if (wordHidden && !peekWord) {
+      onTapCell(item.id, 'word'); // 가려진 상태(peek 중 아님) 탭 = 기존 peek 유지
     } else {
-      onOpenDetail(item.content_word_id); // 가려지지 않은 상태 탭 = 예문 바텀시트 오픈
+      handleSpeak(); // 그 외(안 가려짐 또는 peek 중) 탭 = TTS 재생
     }
-  }, [wordHidden, item.id, item.content_word_id, onTapCell, onOpenDetail]);
+  }, [wordHidden, peekWord, item.id, onTapCell, handleSpeak]);
 
   const handleTapMeaning = useCallback(() => {
-    if (meaningHidden) {
-      onTapCell(item.id, 'meaning');
+    if (meaningHidden && !peekMeaning) {
+      onTapCell(item.id, 'meaning'); // 가려진 상태(peek 중 아님) 탭 = 기존 peek 유지
     } else {
-      onOpenDetail(item.content_word_id);
+      onOpenDetail(item.content_word_id); // 그 외(안 가려짐 또는 peek 중) 탭 = 예문 바텀시트 오픈
     }
-  }, [meaningHidden, item.id, item.content_word_id, onTapCell, onOpenDetail]);
+  }, [meaningHidden, peekMeaning, item.id, item.content_word_id, onTapCell, onOpenDetail]);
 
   const wordCellGesture = Gesture.Tap().onEnd(() => {
     runOnJS(handleTapWord)();
@@ -164,7 +166,7 @@ function DayWordRowImpl({
           <Text style={styles.numberCell}>{item.position + 1}</Text>
 
           <GestureDetector gesture={wordCellGesture}>
-            <View style={styles.wordCell}>
+            <View style={[styles.wordCell, speaking && styles.wordCellSpeaking]}>
               <DustCoverOverlay hidden={showWordSweep} delayMs={columnHideDelayMs}>
                 <View style={styles.wordRow}>
                   <Text style={styles.wordText} numberOfLines={1}>
@@ -174,8 +176,6 @@ function DayWordRowImpl({
               </DustCoverOverlay>
             </View>
           </GestureDetector>
-
-          <TtsButton speaking={speaking} onPress={handleSpeak} />
 
           <GestureDetector gesture={meaningCellGesture}>
             <View style={styles.meaningCell}>
@@ -194,20 +194,6 @@ function DayWordRowImpl({
     </GestureDetector>
   );
 }
-
-function TtsButtonImpl({ speaking, onPress }: { speaking: boolean; onPress: () => void }) {
-  const tapGesture = Gesture.Tap().onEnd(() => {
-    runOnJS(onPress)();
-  });
-  return (
-    <GestureDetector gesture={tapGesture}>
-      <View style={[styles.speakerButton, speaking && styles.speakerButtonActive]}>
-        <Text style={styles.speakerIcon}>{speaking ? '🔊' : '🔈'}</Text>
-      </View>
-    </GestureDetector>
-  );
-}
-const TtsButton = memo(TtsButtonImpl);
 
 const styles = StyleSheet.create({
   row: {
@@ -233,7 +219,10 @@ const styles = StyleSheet.create({
     color: '#999',
   },
   wordCell: {
-    width: 100,
+    width: 132,
+  },
+  wordCellSpeaking: {
+    backgroundColor: '#eef6ff',
   },
   wordRow: {
     flexDirection: 'row',
@@ -243,19 +232,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: '#222',
-  },
-  speakerButton: {
-    width: 32,
-    height: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 16,
-  },
-  speakerButtonActive: {
-    backgroundColor: '#eef6ff',
-  },
-  speakerIcon: {
-    fontSize: 16,
   },
   meaningCell: {
     flex: 1,
