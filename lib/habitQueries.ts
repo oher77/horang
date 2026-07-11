@@ -17,38 +17,55 @@ import { nowEpochMs, todayEpochDay } from './dates';
  * 습관 보너스 금액 기본값(설정에서 변경 가능, app_meta) — 설계.md §7.4.
  * income_rule과 축이 달라 섞지 않는다. app_meta에 사용자 편집값이 없을 때의
  * 폴백 기본값으로만 쓰인다(2026-07-09부터 편집 가능 — getHabitBonusAmounts 참고).
+ *
+ * 2026-07-11: 슬롯 통과(slotPass)·장기 스트릭 마일스톤(streak14/30/60/100) 5종 추가
+ * (사용자 요청). 기존 fullDay/streak7은 유지.
  */
 export const DEFAULT_HABIT_BONUS = {
   fullDay: 200, // 하루 4/4 달성 보너스(원)
   streak7: 500, // 7일 연속 달성 시 추가 보너스(원). 7·14·21…일마다 지급(주기)
+  slotPass: 10, // 습관 미션(슬롯) 1개 통과 보너스(원). 슬롯당 1회(하루 최대 4회)
+  streak14: 4000, // 14일 연속 달성 마일스톤(원)
+  streak30: 20000, // 30일 연속 달성 마일스톤(원)
+  streak60: 50000, // 60일 연속 달성 마일스톤(원)
+  streak100: 100000, // 100일 연속 달성 마일스톤(원)
 } as const;
 
-const HABIT_BONUS_FULL_DAY_KEY = 'habit_bonus_full_day_amount';
-const HABIT_BONUS_STREAK7_KEY = 'habit_bonus_streak7_amount';
+type HabitBonusKind = keyof typeof DEFAULT_HABIT_BONUS;
+
+const HABIT_BONUS_APP_META_KEY: Record<HabitBonusKind, string> = {
+  fullDay: 'habit_bonus_full_day_amount',
+  streak7: 'habit_bonus_streak7_amount',
+  slotPass: 'habit_bonus_slot_pass_amount',
+  streak14: 'habit_bonus_streak14_amount',
+  streak30: 'habit_bonus_streak30_amount',
+  streak60: 'habit_bonus_streak60_amount',
+  streak100: 'habit_bonus_streak100_amount',
+};
+
+const HABIT_BONUS_KINDS = Object.keys(HABIT_BONUS_APP_META_KEY) as HabitBonusKind[];
 
 /**
  * 습관 보너스 금액을 app_meta에서 읽는다(설정 화면 편집값). 키가 없으면(최초
  * 설치·미편집) DEFAULT_HABIT_BONUS 폴백 — lazy read, 시드 INSERT 불필요
  * (lib/notifications.ts의 app_meta 읽기 관행과 동일).
  */
-export async function getHabitBonusAmounts(): Promise<{ fullDay: number; streak7: number }> {
+export async function getHabitBonusAmounts(): Promise<Record<HabitBonusKind, number>> {
   const db = getUserDb();
+  const keys = HABIT_BONUS_KINDS.map((kind) => HABIT_BONUS_APP_META_KEY[kind]);
   const rows = await db.getAllAsync<{ key: string; value: string }>(
-    'SELECT key, value FROM app_meta WHERE key IN (?, ?)',
-    [HABIT_BONUS_FULL_DAY_KEY, HABIT_BONUS_STREAK7_KEY],
+    `SELECT key, value FROM app_meta WHERE key IN (${keys.map(() => '?').join(', ')})`,
+    keys,
   );
   const map = new Map(rows.map((r) => [r.key, r.value]));
 
-  const fullDayRaw = map.get(HABIT_BONUS_FULL_DAY_KEY);
-  const streak7Raw = map.get(HABIT_BONUS_STREAK7_KEY);
-
-  const fullDay = fullDayRaw !== undefined ? Number(fullDayRaw) : DEFAULT_HABIT_BONUS.fullDay;
-  const streak7 = streak7Raw !== undefined ? Number(streak7Raw) : DEFAULT_HABIT_BONUS.streak7;
-
-  return {
-    fullDay: Number.isFinite(fullDay) ? fullDay : DEFAULT_HABIT_BONUS.fullDay,
-    streak7: Number.isFinite(streak7) ? streak7 : DEFAULT_HABIT_BONUS.streak7,
-  };
+  const result = {} as Record<HabitBonusKind, number>;
+  for (const kind of HABIT_BONUS_KINDS) {
+    const raw = map.get(HABIT_BONUS_APP_META_KEY[kind]);
+    const parsed = raw !== undefined ? Number(raw) : DEFAULT_HABIT_BONUS[kind];
+    result[kind] = Number.isFinite(parsed) ? parsed : DEFAULT_HABIT_BONUS[kind];
+  }
+  return result;
 }
 
 /**
@@ -56,11 +73,11 @@ export async function getHabitBonusAmounts(): Promise<{ fullDay: number; streak7
  * 동일한 검증 관행. 이미 기록된 과거 habit_bonus.amount는 기록 시점의 스냅샷이라
  * 소급 변경되지 않는다(recordRetrievalSession 참고) — 새로 확정되는 보너스부터 적용.
  */
-export async function updateHabitBonusAmount(kind: 'fullDay' | 'streak7', amount: number): Promise<void> {
+export async function updateHabitBonusAmount(kind: HabitBonusKind, amount: number): Promise<void> {
   if (!Number.isInteger(amount) || amount < 0) {
     throw new Error('보너스 금액은 0 이상의 정수여야 합니다.');
   }
-  const key = kind === 'fullDay' ? HABIT_BONUS_FULL_DAY_KEY : HABIT_BONUS_STREAK7_KEY;
+  const key = HABIT_BONUS_APP_META_KEY[kind];
   const db = getUserDb();
   await db.runAsync(
     `INSERT INTO app_meta (key, value) VALUES (?, ?)
@@ -295,6 +312,14 @@ export async function recordRetrievalSession(dayId: number): Promise<RecordResul
     recorded = insertResult.changes > 0;
     if (!recorded) return;
 
+    // 습관 미션(슬롯) 통과 보너스: 슬롯 번호를 kind에 포함해 UNIQUE(local_day,kind)로
+    // 하루 슬롯당 1회 멱등 지급(2026-07-11 추가). retrieval_session INSERT가 실제로
+    // 성공한(recorded) 경로에서만 지급 — 중복 기록 조기 반환 경로는 위에서 이미 return됨.
+    await db.runAsync(
+      'INSERT OR IGNORE INTO habit_bonus (local_day, kind, amount, paid, created_ms) VALUES (?, ?, ?, 0, ?)',
+      [today, `slot_pass_${slotIndex}`, bonusAmounts.slotPass, doneMs],
+    );
+
     // 4/4 보너스: 이번 기록으로 오늘 슬롯이 모두 찼는지 확인
     const filledRow = await db.getFirstAsync<{ cnt: number }>(
       'SELECT COUNT(DISTINCT slot_index) AS cnt FROM retrieval_session WHERE local_day = ?',
@@ -326,6 +351,25 @@ export async function recordRetrievalSession(dayId: number): Promise<RecordResul
         );
         streakBonusPaid = streakResult.changes > 0;
       }
+
+      // 장기 스트릭 마일스톤(14/30/60/100일, 2026-07-11 추가): 재계산된 스트릭 값이
+      // 정확히 일치할 때만 지급. streak7과 달리 주기(%)가 아니라 1회성 마일스톤 —
+      // local_day가 kind에 없으므로 스트릭이 끊겼다 같은 날짜 수만큼 재도달하면
+      // 다른 local_day에서 자연히 재지급된다(의도된 동작). 같은 날 슬롯을 여러 번
+      // 채워 이 블록에 재진입해도 UNIQUE(local_day,kind)가 중복 지급을 막는다.
+      const MILESTONES: { days: number; kind: 'streak14' | 'streak30' | 'streak60' | 'streak100' }[] = [
+        { days: 14, kind: 'streak14' },
+        { days: 30, kind: 'streak30' },
+        { days: 60, kind: 'streak60' },
+        { days: 100, kind: 'streak100' },
+      ];
+      const milestone = MILESTONES.find((m) => m.days === streak);
+      if (milestone) {
+        await db.runAsync(
+          'INSERT OR IGNORE INTO habit_bonus (local_day, kind, amount, paid, created_ms) VALUES (?, ?, ?, 0, ?)',
+          [today, milestone.kind, bonusAmounts[milestone.kind], doneMs],
+        );
+      }
     }
   });
 
@@ -334,11 +378,16 @@ export async function recordRetrievalSession(dayId: number): Promise<RecordResul
   return { recorded, slotIndex, fullDayBonusPaid, streakBonusPaid, streakDays };
 }
 
-/** habit_bonus 1행 (용돈 장부 연동, §7.4). */
+/**
+ * habit_bonus 1행 (용돈 장부 연동, §7.4).
+ * kind는 'full_day' | 'streak7' | 'slot_pass_0'~'slot_pass_3' | 'streak14' |
+ * 'streak30' | 'streak60' | 'streak100' 중 하나(2026-07-11 5종 추가). slot_pass_N은
+ * 슬롯 번호가 접미사로 붙는 동적 문자열이라 리터럴 유니온 대신 string으로 둔다.
+ */
 export interface HabitBonusRow {
   id: number;
   local_day: number;
-  kind: 'full_day' | 'streak7';
+  kind: string;
   amount: number;
   paid: boolean;
   created_ms: number;
@@ -380,7 +429,7 @@ export async function listHabitBonusesForMonth(yearMonth: string): Promise<Habit
   return rows.map((r) => ({
     id: r.id,
     local_day: r.local_day,
-    kind: r.kind as 'full_day' | 'streak7',
+    kind: r.kind,
     amount: r.amount,
     paid: r.paid === 1,
     created_ms: r.created_ms,
@@ -426,7 +475,7 @@ export async function listUnpaidHabitBonuses(): Promise<HabitBonusRow[]> {
   return rows.map((r) => ({
     id: r.id,
     local_day: r.local_day,
-    kind: r.kind as 'full_day' | 'streak7',
+    kind: r.kind,
     amount: r.amount,
     paid: r.paid === 1,
     created_ms: r.created_ms,

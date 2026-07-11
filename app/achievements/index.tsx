@@ -65,8 +65,19 @@ function currentMonthRangeMs(): { startMs: number; nextStartMs: number } {
   };
 }
 
+/** kind → 장부 라벨 매핑 (2026-07-11: 슬롯 통과·장기 스트릭 마일스톤 5종 추가). */
+const HABIT_BONUS_LABELS: Record<string, string> = {
+  full_day: '하루 4회 완주',
+  streak7: '7일 연속 보너스',
+  streak14: '14일 연속 보너스',
+  streak30: '30일 연속 보너스',
+  streak60: '60일 연속 보너스',
+  streak100: '100일 연속 보너스',
+};
+
 function habitBonusLabel(kind: HabitBonusRow['kind']): string {
-  return kind === 'full_day' ? '하루 4회 완주' : '7일 연속 보너스';
+  if (kind.startsWith('slot_pass_')) return '습관 미션 통과';
+  return HABIT_BONUS_LABELS[kind] ?? kind;
 }
 
 /**

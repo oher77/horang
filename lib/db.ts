@@ -203,7 +203,7 @@ CREATE TABLE IF NOT EXISTS slot_config (
 CREATE TABLE IF NOT EXISTS habit_bonus (
   id         INTEGER PRIMARY KEY,
   local_day  INTEGER NOT NULL,
-  kind       TEXT NOT NULL,                  -- 'full_day' | 'streak7'
+  kind       TEXT NOT NULL,                  -- 'full_day' | 'streak7' | 'slot_pass_0'~'slot_pass_3' | 'streak14' | 'streak30' | 'streak60' | 'streak100' (2026-07-11 5종 추가)
   amount     INTEGER NOT NULL,               -- 지급 시점 스냅샷(상수가 바뀌어도 소급 안 함)
   paid       INTEGER NOT NULL DEFAULT 0,     -- 부모 지급 체크(test_session.paid와 동일 개념)
   created_ms INTEGER NOT NULL,

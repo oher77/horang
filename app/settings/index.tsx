@@ -526,26 +526,39 @@ function IncomeRulesSection() {
   );
 }
 
-/** 습관 보너스 편집 행 정의(§B-2) — kind는 lib/habitQueries.ts의 updateHabitBonusAmount 인자와 동일. */
-const HABIT_BONUS_ROWS: { kind: 'fullDay' | 'streak7'; label: string }[] = [
+/** 습관 보너스 편집 행 kind 유니온 — lib/habitQueries.ts의 updateHabitBonusAmount 인자와 동일. */
+type HabitBonusKind = 'fullDay' | 'streak7' | 'slotPass' | 'streak14' | 'streak30' | 'streak60' | 'streak100';
+
+/** 습관 보너스 편집 행 정의(§B-2). 2026-07-11: 슬롯 통과·장기 스트릭 마일스톤 5종 추가. */
+const HABIT_BONUS_ROWS: { kind: HabitBonusKind; label: string }[] = [
+  { kind: 'slotPass', label: '미션 1개 통과' },
   { kind: 'fullDay', label: '하루 4회 완주' },
   { kind: 'streak7', label: '7일 연속' },
+  { kind: 'streak14', label: '14일 연속' },
+  { kind: 'streak30', label: '30일 연속' },
+  { kind: 'streak60', label: '60일 연속' },
+  { kind: 'streak100', label: '100일 연속' },
 ];
 
+const HABIT_BONUS_KINDS = HABIT_BONUS_ROWS.map((row) => row.kind);
+
 /**
- * 습관 보너스 금액(하루 4회 완주 / 7일 연속) 편집 섹션.
+ * 습관 보너스 금액(하루 4회 완주 / 7일 연속 / 미션 통과 / 14·30·60·100일 연속) 편집 섹션.
  * IncomeRulesSection과 동일한 TextInput(number-pad)+onBlur 즉시저장 패턴이나,
- * 대상이 income_rule처럼 DB 목록이 아니라 고정 2행(app_meta 키 2개)이라 drafts를
- * kind로 키잉한다. 사용자가 명시 요청한 건 "완주 상금"이지만 7일 연속 보너스도
- * 같은 성격(습관 보너스)이라 함께 편집 가능하게 했다 — 완료 보고에 명시.
+ * 대상이 income_rule처럼 DB 목록이 아니라 고정 7행(app_meta 키 7개)이라 drafts를
+ * kind로 키잉한다.
  */
 function HabitBonusSection() {
-  const [amounts, setAmounts] = useState<{ fullDay: number; streak7: number } | null>(null);
-  const [drafts, setDrafts] = useState<Record<'fullDay' | 'streak7', string>>({ fullDay: '', streak7: '' });
+  const [amounts, setAmounts] = useState<Record<HabitBonusKind, number> | null>(null);
+  const [drafts, setDrafts] = useState<Record<HabitBonusKind, string>>(
+    Object.fromEntries(HABIT_BONUS_KINDS.map((k) => [k, ''])) as Record<HabitBonusKind, string>,
+  );
   const [loaded, setLoaded] = useState(false);
-  const [savingKind, setSavingKind] = useState<'fullDay' | 'streak7' | null>(null);
-  const [savedKind, setSavedKind] = useState<'fullDay' | 'streak7' | null>(null);
-  const [rowError, setRowError] = useState<Record<'fullDay' | 'streak7', string>>({ fullDay: '', streak7: '' });
+  const [savingKind, setSavingKind] = useState<HabitBonusKind | null>(null);
+  const [savedKind, setSavedKind] = useState<HabitBonusKind | null>(null);
+  const [rowError, setRowError] = useState<Record<HabitBonusKind, string>>(
+    Object.fromEntries(HABIT_BONUS_KINDS.map((k) => [k, ''])) as Record<HabitBonusKind, string>,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -553,7 +566,9 @@ function HabitBonusSection() {
       .then((result) => {
         if (cancelled) return;
         setAmounts(result);
-        setDrafts({ fullDay: String(result.fullDay), streak7: String(result.streak7) });
+        setDrafts(
+          Object.fromEntries(HABIT_BONUS_KINDS.map((k) => [k, String(result[k])])) as Record<HabitBonusKind, string>,
+        );
         setLoaded(true);
       })
       .catch(() => {
@@ -564,14 +579,14 @@ function HabitBonusSection() {
     };
   }, []);
 
-  const handleChangeText = useCallback((kind: 'fullDay' | 'streak7', text: string) => {
+  const handleChangeText = useCallback((kind: HabitBonusKind, text: string) => {
     // 숫자만 허용(음수/소수점 입력 자체를 막아 즉시 피드백)
     const digitsOnly = text.replace(/[^0-9]/g, '');
     setDrafts((prev) => ({ ...prev, [kind]: digitsOnly }));
     setSavedKind(null);
   }, []);
 
-  const handleBlur = useCallback(async (kind: 'fullDay' | 'streak7') => {
+  const handleBlur = useCallback(async (kind: HabitBonusKind) => {
     if (!amounts) return;
     const draft = drafts[kind];
     const current = amounts[kind];
@@ -638,7 +653,7 @@ function HabitBonusSection() {
         ))}
       </View>
 
-      {(['fullDay', 'streak7'] as const).map((kind) =>
+      {HABIT_BONUS_KINDS.map((kind) =>
         rowError[kind] ? (
           <Text key={kind} style={styles.error}>{rowError[kind]}</Text>
         ) : null,
