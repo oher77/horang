@@ -126,9 +126,13 @@ export default function DayScreen() {
   // 기존에 스와이프마다 쿼리 4개가 재실행되던 잠복 문제의 수정).
   const trackingInitializedRef = useRef(false);
 
-  // 체류 타이머 상태 — "남은 시간만큼 setTimeout + 일시정지 시 잔여시간 보존" 방식.
+  // 체류 타이머 상태 — "남은 시간만큼 setTimeout" 방식. 백그라운드 이탈·화면 이동 시에는
+  // 잔여시간을 보존하지 않고 임계값 전체로 리셋한다(설계.md §7.1, 2026-07-12 사용자 확정 —
+  // 끊지 않고 한 번에 채워야 인정, 집중 습관 형성 목적). 단 iOS 'inactive'(알림센터·제어센터·
+  // 앱 전환기 등 순간 가림)는 이탈이 아니므로 일시정지-보존한다.
   // 초기값 0: 트래킹 초기화 effect가 실제 임계값을 계산해 넣기 전까지는 resumeDwellTimer의
   // `<= 0` 가드가 타이머 오시작을 막는 안전망.
+  const dwellThresholdMsRef = useRef(0); // 이 세션의 임계값(리셋 복원용, 초기화 시 1회 계산)
   const dwellRemainingMsRef = useRef(0);
   const dwellTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dwellRunningSinceRef = useRef<number | null>(null); // 현재 구간 시작 epoch ms (null = 정지 중)
@@ -179,12 +183,14 @@ export default function DayScreen() {
         // (DWELL_MS_PER_WORD, 2026-07-10 1초→5초 조정), 이후 세션은 3초 + (스와이프 배지
         // 단어수)×1초. 배지 수는 이 시점(화면 로드) 1회 계산해 세션 중 스와이프해도 임계는 고정된다.
         const badgeWordCount = words.filter((w) => w.recall_stage > 0).length;
-        dwellRemainingMsRef.current = Math.max(
+        const thresholdMs = Math.max(
           1000,
           firstSession
             ? words.length * DWELL_MS_PER_WORD
             : LATER_SESSION_BASE_MS + badgeWordCount * 1000,
         );
+        dwellThresholdMsRef.current = thresholdMs;
+        dwellRemainingMsRef.current = thresholdMs;
 
         if (todaySlots[slotIndex]) {
           // 현재 슬롯이 이미 확정됨 — 판정 시도 없이 조용히 잠근다(recordRetrievalSession의
@@ -264,6 +270,7 @@ export default function DayScreen() {
   tryFinalizeRef.current = tryFinalizeSession;
 
   // 체류 타이머 일시정지 — 남은 시간을 dwellRemainingMsRef에 보존.
+  // iOS 'inactive'(알림센터 등 순간 가림) 전용. 진짜 이탈은 resetDwellTimer를 쓴다.
   const pauseDwellTimer = useCallback(() => {
     if (dwellTimerRef.current) {
       clearTimeout(dwellTimerRef.current);
@@ -273,6 +280,20 @@ export default function DayScreen() {
       const elapsed = Date.now() - dwellRunningSinceRef.current;
       dwellRemainingMsRef.current = Math.max(0, dwellRemainingMsRef.current - elapsed);
       dwellRunningSinceRef.current = null;
+    }
+  }, []);
+
+  // 체류 타이머 리셋 — 백그라운드 이탈/화면 이동 시 잔여시간을 버리고 임계값 전체로
+  // 되돌린다(설계.md §7.1 "연속" 판정, 2026-07-12). 이미 판정이 끝난 세션이면 무의미하므로
+  // 건드리지 않는다.
+  const resetDwellTimer = useCallback(() => {
+    if (dwellTimerRef.current) {
+      clearTimeout(dwellTimerRef.current);
+      dwellTimerRef.current = null;
+    }
+    dwellRunningSinceRef.current = null;
+    if (!dwellSatisfiedRef.current) {
+      dwellRemainingMsRef.current = dwellThresholdMsRef.current;
     }
   }, []);
 
@@ -300,13 +321,18 @@ export default function DayScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trackingEnabled]);
 
-  // AppState: background/inactive 시 일시정지, active 복귀 시 재개
+  // AppState: background = 진짜 이탈 → 리셋 / inactive = 순간 가림 → 일시정지 / active 복귀 시 재개.
+  // iOS는 active→inactive→background 순으로 전이하므로, background 도달 시점엔 이미
+  // inactive에서 pause된 상태(wasActive=false)일 수 있다 — 그래서 background 리셋은
+  // wasActive와 무관하게 nextState만 보고 무조건 수행한다.
   useEffect(() => {
     const handleAppStateChange = (nextState: AppStateStatus) => {
       const wasActive = appActiveRef.current;
       const isActive = nextState === 'active';
       appActiveRef.current = isActive;
-      if (wasActive && !isActive) {
+      if (nextState === 'background') {
+        resetDwellTimer();
+      } else if (wasActive && !isActive) {
         pauseDwellTimer();
       } else if (!wasActive && isActive && screenFocusedRef.current) {
         resumeDwellTimer();
@@ -314,9 +340,10 @@ export default function DayScreen() {
     };
     const sub = AppState.addEventListener('change', handleAppStateChange);
     return () => sub.remove();
-  }, [pauseDwellTimer, resumeDwellTimer]);
+  }, [pauseDwellTimer, resetDwellTimer, resumeDwellTimer]);
 
-  // 화면 blur/focus (expo-router) — 다른 화면으로 이동 시 일시정지, 복귀 시 재개
+  // 화면 blur/focus (expo-router) — 다른 화면으로 이동 = 이탈이므로 리셋, 복귀 시 임계값
+  // 전체부터 다시 시작.
   useFocusEffect(
     useCallback(() => {
       screenFocusedRef.current = true;
@@ -325,10 +352,10 @@ export default function DayScreen() {
       }
       return () => {
         screenFocusedRef.current = false;
-        pauseDwellTimer();
+        resetDwellTimer();
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [pauseDwellTimer, resumeDwellTimer]),
+    }, [resetDwellTimer, resumeDwellTimer]),
   );
 
   // 화면 완전 이탈 시 타이머 정리 (cleanup 누락 방지)
