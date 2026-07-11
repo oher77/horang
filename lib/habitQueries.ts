@@ -271,6 +271,10 @@ export interface RecordResult {
   fullDayBonusPaid: boolean; // 이번에 4/4 보너스가 지급됐는지
   streakBonusPaid: boolean; // 이번에 7일 주기 보너스가 지급됐는지
   streakDays: number; // 기록 후 스트릭
+  // 이번 호출에서 실제로 새로 INSERT된(각 runAsync의 changes > 0) 보너스만 담는다
+  // (2026-07-12 추가, 화면의 동전 애니메이션/배너 실지급액 표시용). amount는 지급
+  // 시점의 스냅샷 값 그대로 — bonusAmounts 재조회 없이 그대로 담는다.
+  paidBonuses: { kind: string; amount: number }[];
 }
 
 /**
@@ -288,13 +292,27 @@ export async function recordRetrievalSession(dayId: number): Promise<RecordResul
   const isToday = await isTodayDay(dayId);
   if (!isToday) {
     const streakDays = await getCurrentStreak();
-    return { recorded: false, slotIndex: null, fullDayBonusPaid: false, streakBonusPaid: false, streakDays };
+    return {
+      recorded: false,
+      slotIndex: null,
+      fullDayBonusPaid: false,
+      streakBonusPaid: false,
+      streakDays,
+      paidBonuses: [],
+    };
   }
 
   const slotIndex = await currentSlotIndex();
   if (slotIndex === null) {
     const streakDays = await getCurrentStreak();
-    return { recorded: false, slotIndex: null, fullDayBonusPaid: false, streakBonusPaid: false, streakDays };
+    return {
+      recorded: false,
+      slotIndex: null,
+      fullDayBonusPaid: false,
+      streakBonusPaid: false,
+      streakDays,
+      paidBonuses: [],
+    };
   }
 
   const today = todayEpochDay();
@@ -303,6 +321,7 @@ export async function recordRetrievalSession(dayId: number): Promise<RecordResul
   let recorded = false;
   let fullDayBonusPaid = false;
   let streakBonusPaid = false;
+  const paidBonuses: { kind: string; amount: number }[] = [];
 
   await db.withTransactionAsync(async () => {
     const insertResult = await db.runAsync(
@@ -315,10 +334,13 @@ export async function recordRetrievalSession(dayId: number): Promise<RecordResul
     // 습관 미션(슬롯) 통과 보너스: 슬롯 번호를 kind에 포함해 UNIQUE(local_day,kind)로
     // 하루 슬롯당 1회 멱등 지급(2026-07-11 추가). retrieval_session INSERT가 실제로
     // 성공한(recorded) 경로에서만 지급 — 중복 기록 조기 반환 경로는 위에서 이미 return됨.
-    await db.runAsync(
+    const slotPassResult = await db.runAsync(
       'INSERT OR IGNORE INTO habit_bonus (local_day, kind, amount, paid, created_ms) VALUES (?, ?, ?, 0, ?)',
       [today, `slot_pass_${slotIndex}`, bonusAmounts.slotPass, doneMs],
     );
+    if (slotPassResult.changes > 0) {
+      paidBonuses.push({ kind: `slot_pass_${slotIndex}`, amount: bonusAmounts.slotPass });
+    }
 
     // 4/4 보너스: 이번 기록으로 오늘 슬롯이 모두 찼는지 확인
     const filledRow = await db.getFirstAsync<{ cnt: number }>(
@@ -333,6 +355,9 @@ export async function recordRetrievalSession(dayId: number): Promise<RecordResul
         [today, 'full_day', bonusAmounts.fullDay, doneMs],
       );
       fullDayBonusPaid = fullDayResult.changes > 0;
+      if (fullDayBonusPaid) {
+        paidBonuses.push({ kind: 'full_day', amount: bonusAmounts.fullDay });
+      }
 
       // 스트릭 재계산 (이 트랜잭션 내 최신 상태 반영) — 오늘이 방금 4/4가 됐으므로 오늘부터 역산
       const fullDays = await getFullDaysDesc(db);
@@ -350,6 +375,9 @@ export async function recordRetrievalSession(dayId: number): Promise<RecordResul
           [today, 'streak7', bonusAmounts.streak7, doneMs],
         );
         streakBonusPaid = streakResult.changes > 0;
+        if (streakBonusPaid) {
+          paidBonuses.push({ kind: 'streak7', amount: bonusAmounts.streak7 });
+        }
       }
 
       // 장기 스트릭 마일스톤(14/30/60/100일, 2026-07-11 추가): 재계산된 스트릭 값이
@@ -365,17 +393,20 @@ export async function recordRetrievalSession(dayId: number): Promise<RecordResul
       ];
       const milestone = MILESTONES.find((m) => m.days === streak);
       if (milestone) {
-        await db.runAsync(
+        const milestoneResult = await db.runAsync(
           'INSERT OR IGNORE INTO habit_bonus (local_day, kind, amount, paid, created_ms) VALUES (?, ?, ?, 0, ?)',
           [today, milestone.kind, bonusAmounts[milestone.kind], doneMs],
         );
+        if (milestoneResult.changes > 0) {
+          paidBonuses.push({ kind: milestone.kind, amount: bonusAmounts[milestone.kind] });
+        }
       }
     }
   });
 
   const streakDays = await getCurrentStreak();
 
-  return { recorded, slotIndex, fullDayBonusPaid, streakBonusPaid, streakDays };
+  return { recorded, slotIndex, fullDayBonusPaid, streakBonusPaid, streakDays, paidBonuses };
 }
 
 /**

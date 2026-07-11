@@ -20,7 +20,6 @@ import DayWordRow, { ROW_HEIGHT } from '../../components/DayWordRow';
 import WordDetailSheet from '../../components/WordDetailSheet';
 import {
   currentSlotIndex,
-  DEFAULT_HABIT_BONUS,
   getTodaySlots,
   isFirstSessionOfToday,
   isTodayDay,
@@ -52,6 +51,11 @@ const COUNTDOWN_MS_PER_WORD = 5000; // 단어수 × 5초
 // 순간 트리거, SIREN_DURATION_MS 동안 표시 후 자동으로 사라진다.
 const SIREN_AT_REMAINING_MS = 10_000;
 const SIREN_DURATION_MS = 1400;
+
+// 미션 완료 동전 애니메이션 (2026-07-12 사용자 요청) — 등장 후 위로 살짝 떠오르며
+// 페이드아웃, 총 소요시간을 상수로 분리해 애니메이션 타이밍과 state 정리 타이머가
+// 같은 값을 공유하게 한다(어긋나면 잔상/조기소멸 버그로 이어짐).
+const COIN_DURATION_MS = 1300;
 
 type ColumnKey = 'word' | 'meaning';
 type StudyMode = 'study' | 'retrieval';
@@ -112,6 +116,10 @@ export default function DayScreen() {
   const [trackingEnabled, setTrackingEnabled] = useState(false);
   const [sessionRecorded, setSessionRecorded] = useState(false);
   const [completionBanner, setCompletionBanner] = useState<string | null>(null);
+  // 미션 완료 동전 애니메이션 — 총 지급액만 표시(개별 보너스 내역은 배너 문구로 충분).
+  // 세션당 1회 구조(sessionRecorded 잠금)라 큐잉 없이 단순 교체로 충분하다.
+  const [coinAmount, setCoinAmount] = useState<number | null>(null);
+  const coinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 트래킹 초기화 1회 가드 — 초기화 성공 후에는 words 변경(스와이프에 의한 setWords)이
   // 발생해도 임계값 재계산이 다시 일어나지 않는다("세션 중 임계 고정" 스펙의 필수 전제이자,
@@ -167,9 +175,9 @@ export default function DayScreen() {
         }
         trackingInitializedRef.current = true;
 
-        // 미션 임계값(체류 단독, 2026-07-09 확정 — 설계.md §7.1): 오늘 첫 세션은 단어수×1초,
-        // 이후 세션은 3초 + (스와이프 배지 단어수)×1초. 배지 수는 이 시점(화면 로드) 1회 계산해
-        // 세션 중 스와이프해도 임계는 고정된다.
+        // 미션 임계값(체류 단독, 2026-07-09 확정 — 설계.md §7.1): 오늘 첫 세션은 단어수×5초
+        // (DWELL_MS_PER_WORD, 2026-07-10 1초→5초 조정), 이후 세션은 3초 + (스와이프 배지
+        // 단어수)×1초. 배지 수는 이 시점(화면 로드) 1회 계산해 세션 중 스와이프해도 임계는 고정된다.
         const badgeWordCount = words.filter((w) => w.recall_stage > 0).length;
         dwellRemainingMsRef.current = Math.max(
           1000,
@@ -220,14 +228,32 @@ export default function DayScreen() {
           // 이미 이 슬롯이 찬 상태 등 — 조용히 무시(스펙: recorded=false면 피드백 없음)
           return;
         }
-        let message = '이번 슬롯 인출 완료 ●';
-        if (result.fullDayBonusPaid && result.streakBonusPaid) {
-          message = `오늘 4회 완주! +${DEFAULT_HABIT_BONUS.fullDay}원, ${result.streakDays}일 연속 +${DEFAULT_HABIT_BONUS.streak7}원`;
-        } else if (result.fullDayBonusPaid) {
-          message = `오늘 4회 완주! +${DEFAULT_HABIT_BONUS.fullDay}원`;
-        }
-        setCompletionBanner(message);
+
+        // 배너 문구 — 실지급 내역(result.paidBonuses) 기반으로 조립. 이전에는
+        // DEFAULT_HABIT_BONUS 상수 금액을 그대로 찍어 설정에서 금액을 바꾸면 배너가
+        // 틀린 숫자를 보여주는 잠복 버그가 있었다(2026-07-12 수정). 개별 금액은
+        // 배너에 쓰지 않는다 — 동전이 총액을 보여주므로 단문 유지.
+        const kinds = new Set(result.paidBonuses.map((b) => b.kind));
+        const parts = ['이번 슬롯 미션 완료!'];
+        if (kinds.has('full_day')) parts.push('오늘 4회 완주!');
+        if (kinds.has('streak7')) parts.push(`${result.streakDays}일 연속!`);
+        const milestoneKind = result.paidBonuses.find((b) =>
+          ['streak14', 'streak30', 'streak60', 'streak100'].includes(b.kind),
+        );
+        if (milestoneKind) parts.push(`${result.streakDays}일 마일스톤 달성!`);
+        setCompletionBanner(parts.join(' '));
         setTimeout(() => setCompletionBanner(null), BANNER_DURATION_MS);
+
+        // 동전 애니메이션 — 이번 호출에서 실제로 지급된 보너스 총액만 표시
+        const total = result.paidBonuses.reduce((sum, b) => sum + b.amount, 0);
+        if (total > 0) {
+          if (coinTimerRef.current) clearTimeout(coinTimerRef.current);
+          setCoinAmount(total);
+          coinTimerRef.current = setTimeout(() => {
+            setCoinAmount(null);
+            coinTimerRef.current = null;
+          }, COIN_DURATION_MS);
+        }
       })
       .catch(() => {
         // 습관 트래킹은 부가 기능 — 실패해도 학습 흐름을 막지 않는다.
@@ -309,6 +335,7 @@ export default function DayScreen() {
   useEffect(() => {
     return () => {
       if (dwellTimerRef.current) clearTimeout(dwellTimerRef.current);
+      if (coinTimerRef.current) clearTimeout(coinTimerRef.current);
     };
   }, []);
 
@@ -478,6 +505,8 @@ export default function DayScreen() {
         <RetrievalCountdownBar progress={lineBarProgress} />
       )}
 
+      {coinAmount !== null && <CoinPopup amount={coinAmount} top={insets.top + 8} />}
+
       {completionBanner && (
         <Animated.View
           entering={FadeIn.duration(200)}
@@ -620,6 +649,47 @@ function RetrievalSiren() {
   );
 }
 
+// 미션 완료 동전 애니메이션 (2026-07-12 사용자 요청) — 리스트 밖 형제 노드로 렌더
+// (§4.5 FlatList 성능 계약 유지, renderItem deps에는 넣지 않는다). 등장 시
+// opacity 0→1 + 위로 살짝 떠오르며 후반부 페이드아웃.
+function CoinPopup({ amount, top }: { amount: number; top: number }) {
+  const opacity = useSharedValue(0);
+  const translateY = useSharedValue(0);
+
+  useEffect(() => {
+    opacity.value = withSequence(
+      withTiming(1, { duration: 150, easing: Easing.out(Easing.quad) }),
+      withTiming(1, { duration: COIN_DURATION_MS - 150 - 400 }),
+      withTiming(0, { duration: 400, easing: Easing.in(Easing.quad) }),
+    );
+    translateY.value = withTiming(-48, {
+      duration: COIN_DURATION_MS,
+      easing: Easing.out(Easing.quad),
+    });
+    return () => {
+      cancelAnimation(opacity);
+      cancelAnimation(translateY);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const coinStyle = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+    transform: [{ translateY: translateY.value }],
+  }));
+
+  return (
+    // 배너(top 위치, 높이 ~40) 아래 56px 지점에서 시작해 translateY −48로 떠오르면
+    // 배너 높이 부근에서 페이드아웃된다. zIndex가 배너(10)보다 낮아(9) 마지막에 배너
+    // 뒤로 스며들며 사라진다. 배너 "위쪽"은 insets.top에 따라 화면 밖이라 쓸 수 없다.
+    <View style={[styles.coinWrap, { top: top + 56 }]} pointerEvents="none">
+      <Animated.View style={[styles.coin, coinStyle]}>
+        <Text style={styles.coinText}>+{amount.toLocaleString()}원</Text>
+      </Animated.View>
+    </View>
+  );
+}
+
 function HeaderEyeCell({
   label,
   hidden,
@@ -740,6 +810,29 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 13,
     fontWeight: '600',
+    textAlign: 'center',
+  },
+  coinWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    zIndex: 9,
+    alignItems: 'center',
+  },
+  coin: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#ffc94a',
+    borderWidth: 3,
+    borderColor: '#c98a12',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  coinText: {
+    color: '#7a4e00',
+    fontSize: 12,
+    fontWeight: '800',
     textAlign: 'center',
   },
   sirenOverlay: {
