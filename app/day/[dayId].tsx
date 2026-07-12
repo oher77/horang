@@ -43,6 +43,11 @@ const PEEK_DURATION_MS = 1400;
 // 하루 4회 분산 인출 습관 시스템 — 세션 트래킹 상수 (설계.md §7.1, §7.3, 2026-07-09 기준 교체)
 const DWELL_MS_PER_WORD = 5000; // 오늘 첫 세션 임계: 단어수 × 5초 (2026-07-10 사용자 조정, 1초→5초)
 const LATER_SESSION_BASE_MS = 3000; // 이후 세션 임계 기본값: 3초 + 배지수×1초
+// 이탈 허용 유예(2026-07-12): 앱이 비활성화됐다가 이 시간 안에 돌아오면 실수/시스템 UI
+// (알림센터 등)로 보고 이어서 세고, 넘기면 임계값 전체로 리셋. AppState 상태명(inactive/
+// background)으로 구분하지 않는 이유: iOS가 알림센터를 background로 보고하는 버전이 있어
+// (RN 알려진 퀴크) 상태명 기반 구분은 기기에 따라 깨진다 — 시간 기반이 유일하게 안정적.
+const DWELL_LEAVE_GRACE_MS = 3000;
 const BANNER_DURATION_MS = 2000; // 완료 피드백 배너 표시 시간
 
 // 인출모드 카운트다운 라인바 상수 (설계.md §7.3)
@@ -52,10 +57,12 @@ const COUNTDOWN_MS_PER_WORD = 5000; // 단어수 × 5초
 const SIREN_AT_REMAINING_MS = 10_000;
 const SIREN_DURATION_MS = 1400;
 
-// 미션 완료 동전 애니메이션 (2026-07-12 사용자 요청) — 등장 후 위로 살짝 떠오르며
-// 페이드아웃, 총 소요시간을 상수로 분리해 애니메이션 타이밍과 state 정리 타이머가
-// 같은 값을 공유하게 한다(어긋나면 잔상/조기소멸 버그로 이어짐).
-const COIN_DURATION_MS = 1300;
+// 미션 완료 동전 애니메이션 (2026-07-12 사용자 요청) — 배너 메시지가 먼저 자리 잡은 뒤
+// COIN_DELAY_MS 후에 등장, 위로 살짝 떠오르며 페이드아웃. 총 소요시간을 상수로 분리해
+// 애니메이션 타이밍과 state 정리 타이머가 같은 값을 공유하게 한다(어긋나면 잔상/조기소멸
+// 버그로 이어짐).
+const COIN_DELAY_MS = 900; // 배너 등장(FadeIn 200ms) 후 이 시점에 동전 시작
+const COIN_DURATION_MS = 1000; // 동전 등장→상승→소멸 전체 시간
 
 type ColumnKey = 'word' | 'meaning';
 type StudyMode = 'study' | 'retrieval';
@@ -119,17 +126,32 @@ export default function DayScreen() {
   // 미션 완료 동전 애니메이션 — 총 지급액만 표시(개별 보너스 내역은 배너 문구로 충분).
   // 세션당 1회 구조(sessionRecorded 잠금)라 큐잉 없이 단순 교체로 충분하다.
   const [coinAmount, setCoinAmount] = useState<number | null>(null);
-  const coinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const coinShowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // 배너 후 지연 등장용
+  const coinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // 소멸(state 정리)용
+
+  // ★★★ 임시 애니메이션 미리보기 (2026-07-12) — 확인 끝나면 이 useEffect 통째로 삭제할 것 ★★★
+  // 오늘 슬롯이 이미 기록돼 실제 경로로는 재생 불가라, DB를 건드리지 않고 화면 진입 1.5초 뒤
+  // 배너+동전 시퀀스를 가짜로 재생한다. 화면을 나갔다 다시 들어오면 반복 재생.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setCompletionBanner('이번 슬롯 미션 완료!');
+      setTimeout(() => setCompletionBanner(null), BANNER_DURATION_MS);
+      coinShowTimerRef.current = setTimeout(() => setCoinAmount(10), COIN_DELAY_MS);
+      coinTimerRef.current = setTimeout(() => setCoinAmount(null), COIN_DELAY_MS + COIN_DURATION_MS);
+    }, 1500);
+    return () => clearTimeout(t);
+  }, []);
+  // ★★★ 임시 미리보기 끝 ★★★
 
   // 트래킹 초기화 1회 가드 — 초기화 성공 후에는 words 변경(스와이프에 의한 setWords)이
   // 발생해도 임계값 재계산이 다시 일어나지 않는다("세션 중 임계 고정" 스펙의 필수 전제이자,
   // 기존에 스와이프마다 쿼리 4개가 재실행되던 잠복 문제의 수정).
   const trackingInitializedRef = useRef(false);
 
-  // 체류 타이머 상태 — "남은 시간만큼 setTimeout" 방식. 백그라운드 이탈·화면 이동 시에는
-  // 잔여시간을 보존하지 않고 임계값 전체로 리셋한다(설계.md §7.1, 2026-07-12 사용자 확정 —
-  // 끊지 않고 한 번에 채워야 인정, 집중 습관 형성 목적). 단 iOS 'inactive'(알림센터·제어센터·
-  // 앱 전환기 등 순간 가림)는 이탈이 아니므로 일시정지-보존한다.
+  // 체류 타이머 상태 — "남은 시간만큼 setTimeout" 방식. 이탈(비활성화) 후 복귀가
+  // DWELL_LEAVE_GRACE_MS 이내면 이어서 세고, 넘기거나 화면을 이동하면 임계값 전체로
+  // 리셋한다(설계.md §7.1 "연속" 판정, 2026-07-12 사용자 확정 — 끊지 않고 한 번에
+  // 채워야 인정, 집중 습관 형성 목적).
   // 초기값 0: 트래킹 초기화 effect가 실제 임계값을 계산해 넣기 전까지는 resumeDwellTimer의
   // `<= 0` 가드가 타이머 오시작을 막는 안전망.
   const dwellThresholdMsRef = useRef(0); // 이 세션의 임계값(리셋 복원용, 초기화 시 1회 계산)
@@ -139,6 +161,8 @@ export default function DayScreen() {
   const dwellSatisfiedRef = useRef(false);
   const screenFocusedRef = useRef(true);
   const appActiveRef = useRef(AppState.currentState === 'active');
+  // 앱이 비활성화된 시각 — 복귀 시 이탈 시간(now - leftAt)으로 유예 초과 여부를 판정한다.
+  const leftAtMsRef = useRef<number | null>(null);
 
   useEffect(() => {
     const id = Number(dayId);
@@ -250,15 +274,20 @@ export default function DayScreen() {
         setCompletionBanner(parts.join(' '));
         setTimeout(() => setCompletionBanner(null), BANNER_DURATION_MS);
 
-        // 동전 애니메이션 — 이번 호출에서 실제로 지급된 보너스 총액만 표시
+        // 동전 애니메이션 — 이번 호출에서 실제로 지급된 보너스 총액만 표시.
+        // 배너가 먼저 자리 잡도록 COIN_DELAY_MS 후에 등장시킨다(2026-07-12 사용자 조정).
         const total = result.paidBonuses.reduce((sum, b) => sum + b.amount, 0);
         if (total > 0) {
+          if (coinShowTimerRef.current) clearTimeout(coinShowTimerRef.current);
           if (coinTimerRef.current) clearTimeout(coinTimerRef.current);
-          setCoinAmount(total);
+          coinShowTimerRef.current = setTimeout(() => {
+            setCoinAmount(total);
+            coinShowTimerRef.current = null;
+          }, COIN_DELAY_MS);
           coinTimerRef.current = setTimeout(() => {
             setCoinAmount(null);
             coinTimerRef.current = null;
-          }, COIN_DURATION_MS);
+          }, COIN_DELAY_MS + COIN_DURATION_MS);
         }
       })
       .catch(() => {
@@ -269,8 +298,9 @@ export default function DayScreen() {
   const tryFinalizeRef = useRef(tryFinalizeSession);
   tryFinalizeRef.current = tryFinalizeSession;
 
-  // 체류 타이머 일시정지 — 남은 시간을 dwellRemainingMsRef에 보존.
-  // iOS 'inactive'(알림센터 등 순간 가림) 전용. 진짜 이탈은 resetDwellTimer를 쓴다.
+  // 체류 타이머 일시정지 — 남은 시간을 dwellRemainingMsRef에 보존. 모든 비활성화 시
+  // 일단 이걸로 멈추고, 리셋 여부는 복귀 시점에 이탈 시간으로 판정한다(유예 초과 시
+  // resetDwellTimer). 화면 이동(blur)은 유예 없이 즉시 resetDwellTimer.
   const pauseDwellTimer = useCallback(() => {
     if (dwellTimerRef.current) {
       clearTimeout(dwellTimerRef.current);
@@ -321,21 +351,27 @@ export default function DayScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trackingEnabled]);
 
-  // AppState: background = 진짜 이탈 → 리셋 / inactive = 순간 가림 → 일시정지 / active 복귀 시 재개.
-  // iOS는 active→inactive→background 순으로 전이하므로, background 도달 시점엔 이미
-  // inactive에서 pause된 상태(wasActive=false)일 수 있다 — 그래서 background 리셋은
-  // wasActive와 무관하게 nextState만 보고 무조건 수행한다.
+  // AppState: 비활성화(inactive/background 불문)되면 일시정지 + 이탈 시각 기록, active
+  // 복귀 시 이탈 시간이 DWELL_LEAVE_GRACE_MS를 넘겼으면 리셋(임계값 전체부터), 이내면
+  // 보존된 잔여시간부터 재개. 판정을 복귀 시점으로 미루므로 백그라운드에서 JS가 멈춰
+  // 있어도 타이머 없이 동작하고, iOS의 inactive/background 보고 편차와도 무관하다.
   useEffect(() => {
     const handleAppStateChange = (nextState: AppStateStatus) => {
       const wasActive = appActiveRef.current;
       const isActive = nextState === 'active';
       appActiveRef.current = isActive;
-      if (nextState === 'background') {
-        resetDwellTimer();
-      } else if (wasActive && !isActive) {
+      if (wasActive && !isActive) {
+        leftAtMsRef.current = Date.now();
         pauseDwellTimer();
-      } else if (!wasActive && isActive && screenFocusedRef.current) {
-        resumeDwellTimer();
+      } else if (!wasActive && isActive) {
+        const awayMs = leftAtMsRef.current !== null ? Date.now() - leftAtMsRef.current : 0;
+        leftAtMsRef.current = null;
+        if (awayMs > DWELL_LEAVE_GRACE_MS) {
+          resetDwellTimer();
+        }
+        if (screenFocusedRef.current) {
+          resumeDwellTimer();
+        }
       }
     };
     const sub = AppState.addEventListener('change', handleAppStateChange);
@@ -362,6 +398,7 @@ export default function DayScreen() {
   useEffect(() => {
     return () => {
       if (dwellTimerRef.current) clearTimeout(dwellTimerRef.current);
+      if (coinShowTimerRef.current) clearTimeout(coinShowTimerRef.current);
       if (coinTimerRef.current) clearTimeout(coinTimerRef.current);
     };
   }, []);
@@ -684,15 +721,17 @@ function CoinPopup({ amount, top }: { amount: number; top: number }) {
   const translateY = useSharedValue(0);
 
   useEffect(() => {
+    // 1. 투명도(Opacity) 애니메이션
     opacity.value = withSequence(
-      withTiming(1, { duration: 150, easing: Easing.out(Easing.quad) }),
-      withTiming(1, { duration: COIN_DURATION_MS - 150 - 400 }),
+      // withTiming(1, { duration: 150, easing: Easing.out(Easing.quad) }),
+      withTiming(1, { duration: COIN_DURATION_MS - 400}),
       withTiming(0, { duration: 400, easing: Easing.in(Easing.quad) }),
     );
-    translateY.value = withTiming(-48, {
-      duration: COIN_DURATION_MS,
-      easing: Easing.out(Easing.quad),
-    });
+    // 2. Y축 위치(TranslateY) 애니메이션
+    translateY.value = withSequence(
+      withTiming(0, { duration: COIN_DURATION_MS -400 }),
+      withTiming(-48, { duration: 400, easing: Easing.out(Easing.quad) }), 
+    );
     return () => {
       cancelAnimation(opacity);
       cancelAnimation(translateY);
@@ -705,13 +744,23 @@ function CoinPopup({ amount, top }: { amount: number; top: number }) {
     transform: [{ translateY: translateY.value }],
   }));
 
+  // 금액 단계별 동전 지름 — 큰 보상일수록 큰 동전 (2026-07-12 사용자 확정)
+  const coinDiameter = amount >= 100_000 ? 88 : amount >= 10_000 ? 72 : amount >= 1_000 ? 56 : 42;
+
   return (
     // 배너(top 위치, 높이 ~40) 아래 56px 지점에서 시작해 translateY −48로 떠오르면
-    // 배너 높이 부근에서 페이드아웃된다. zIndex가 배너(10)보다 낮아(9) 마지막에 배너
-    // 뒤로 스며들며 사라진다. 배너 "위쪽"은 insets.top에 따라 화면 밖이라 쓸 수 없다.
+    // 배너 높이 부근에서 페이드아웃된다. zIndex가 배너(10)보다 높아(11) 마지막에 배너
     <View style={[styles.coinWrap, { top: top + 56 }]} pointerEvents="none">
-      <Animated.View style={[styles.coin, coinStyle]}>
-        <Text style={styles.coinText}>+{amount.toLocaleString()}원</Text>
+      {/* 글자 크기는 고정(12pt), 동전 지름만 금액 단계에 따라 커진다 (2026-07-12 사용자 확정).
+          지름은 각 단계 최장 문구("+100,000" 등)가 원 안에 들어가는 크기로 산정. */}
+      <Animated.View
+        style={[
+          styles.coin,
+          { width: coinDiameter, height: coinDiameter, borderRadius: coinDiameter / 2 },
+          coinStyle,
+        ]}
+      >
+        <Text style={styles.coinText}>+{amount.toLocaleString()}</Text>
       </Animated.View>
     </View>
   );
@@ -843,23 +892,22 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     right: 0,
-    zIndex: 9,
+    zIndex: 11, // 배너(10)보다 위 — 동전이 메시지 앞으로 지나가며 사라진다 (2026-07-12 사용자 조정)
     alignItems: 'center',
   },
   coin: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    // 항상 완전한 원 (2026-07-12 사용자 확정 — 알약형 반려). width/height/borderRadius는
+    // CoinPopup이 금액 단계별 지름(coinDiameter)으로 주입한다.
     backgroundColor: '#ffc94a',
-    borderWidth: 3,
+    borderWidth: 1,
     borderColor: '#c98a12',
     alignItems: 'center',
     justifyContent: 'center',
   },
   coinText: {
     color: '#7a4e00',
-    fontSize: 12,
-    fontWeight: '800',
+    fontSize: 10,
+    fontWeight: '600',
     textAlign: 'center',
   },
   sirenOverlay: {
