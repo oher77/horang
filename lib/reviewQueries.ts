@@ -158,6 +158,48 @@ export async function getTestPool(todayDayId: number): Promise<TestQuestion[]> {
   return questions;
 }
 
+/** 오늘 이미 치른 테스트 세션 요약 (완료 상태 UI에 점수 표시용). */
+export interface TodayTestSession {
+  sessionId: number;
+  score100: number | null;
+  correctCount: number;
+  totalCount: number;
+  incomeAmount: number | null;
+}
+
+/**
+ * 오늘(로컬 자정 기준 taken_day) 세션이 있으면 요약을 반환, 없으면 null.
+ * "하루 1회" 게이트의 존재 판정과 완료 상태 UI 점수 표시를 겸한다 (2026-07-12 사용자
+ * 확정: 테스트는 하루 1회. 재채점은 새 테스트가 아니므로 게이트 대상 아님 —
+ * saveTestSession의 existingSessionId 분기 그대로). idx_session_takenday 인덱스를 탄다.
+ */
+export async function getTodayTestSession(): Promise<TodayTestSession | null> {
+  const userDb = getUserDb();
+  const today = todayEpochDay();
+  const row = await userDb.getFirstAsync<{
+    id: number;
+    score100: number | null;
+    correct_count: number;
+    total_count: number;
+    income_amount: number | null;
+  }>(
+    `SELECT id, score100, correct_count, total_count, income_amount
+     FROM test_session
+     WHERE taken_day = ?
+     ORDER BY taken_ms DESC
+     LIMIT 1`,
+    [today],
+  );
+  if (!row) return null;
+  return {
+    sessionId: row.id,
+    score100: row.score100,
+    correctCount: row.correct_count,
+    totalCount: row.total_count,
+    incomeAmount: row.income_amount,
+  };
+}
+
 function shuffle<T>(arr: T[]): T[] {
   const copy = [...arr];
   for (let i = copy.length - 1; i > 0; i -= 1) {

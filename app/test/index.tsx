@@ -27,9 +27,15 @@ import { ActivityIndicator, FlatList, Platform, Pressable, StyleSheet, Text, Tex
 import ScoreRevealAnimation from '../../components/test/ScoreRevealAnimation';
 import TestRow, { ROW_MIN_HEIGHT } from '../../components/test/TestRow';
 import { ensureTodayDay } from '../../lib/queries';
-import { getTestPool, saveTestSession, type TestQuestion } from '../../lib/reviewQueries';
+import {
+  getTestPool,
+  getTodayTestSession,
+  saveTestSession,
+  type TestQuestion,
+  type TodayTestSession,
+} from '../../lib/reviewQueries';
 
-type LoadState = 'loading' | 'ready' | 'empty' | 'error';
+type LoadState = 'loading' | 'ready' | 'empty' | 'error' | 'done';
 type Phase = 'grading' | 'graded' | 'revealing' | 'result';
 
 interface GradeState {
@@ -50,6 +56,8 @@ export default function TestScreen() {
     totalCount: number;
     incomeAmount: number;
   } | null>(null);
+  // 오늘 이미 테스트를 봤을 때(진입 게이트) 완료 상태 UI에 표시할 세션 요약.
+  const [todaySession, setTodaySession] = useState<TodayTestSession | null>(null);
 
   const dayIdRef = useRef<number | null>(null);
   const sessionIdRef = useRef<number | undefined>(undefined);
@@ -70,19 +78,30 @@ export default function TestScreen() {
     setAnswers({});
     setGrades({});
     setResult(null);
+    setTodaySession(null);
     sessionIdRef.current = undefined;
 
-    ensureTodayDay()
-      .then(async (day) => {
+    (async () => {
+      try {
+        // 진입 게이트: 오늘(taken_day 기준) 이미 테스트를 봤으면 출제 풀 조회 자체를
+        // 하지 않고 완료 상태로 전환한다 (2026-07-12 사용자 확정, 재채점은 별개 허용).
+        const session = await getTodayTestSession();
+        if (session) {
+          setTodaySession(session);
+          setState('done');
+          return;
+        }
+
+        const day = await ensureTodayDay();
         dayIdRef.current = day.id;
         const pool = await getTestPool(day.id);
         setQuestions(pool);
         setState(pool.length === 0 ? 'empty' : 'ready');
-      })
-      .catch((err: unknown) => {
+      } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
         setState('error');
-      });
+      }
+    })();
   }, []);
 
   useEffect(() => {
@@ -207,6 +226,21 @@ export default function TestScreen() {
   const handleAnimationComplete = useCallback(async () => {
     const dayId = dayIdRef.current;
     if (dayId == null) return;
+
+    // 이중 방어: 새 세션(재채점이 아닌 최초 제출)일 때만, INSERT 직전에 한 번 더
+    // 오늘 세션 존재 여부를 확인한다. 자정 경계(테스트 시작 후 자정을 넘겨 제출)나
+    // 이중 탭으로 같은 화면 인스턴스에서 두 번 제출되는 경우를 막기 위함.
+    // sessionIdRef == null 조건이 핵심: 이게 없으면 재채점 재제출 때 방금 만든 자기
+    // 세션을 "이미 있음"으로 오인해 정상 재채점을 막는다 (재채점 경로는 게이트 대상 아님).
+    if (sessionIdRef.current == null) {
+      const session = await getTodayTestSession();
+      if (session) {
+        setTodaySession(session);
+        setState('done');
+        setPhase('grading');
+        return;
+      }
+    }
 
     const results = questions.map((q) => ({
       content_word_id: q.content_word_id,
@@ -333,6 +367,17 @@ export default function TestScreen() {
         <View style={styles.empty}>
           <Text style={styles.emptyText}>출제할 단어가 없어요.</Text>
           <Text style={styles.emptySubText}>오늘의 단어장을 먼저 학습해 보세요.</Text>
+        </View>
+      )}
+
+      {state === 'done' && (
+        <View style={styles.empty}>
+          <Text style={styles.emptyText}>
+            {todaySession?.score100 != null
+              ? `오늘 테스트는 완료했어요! ${todaySession.score100}점`
+              : '오늘 테스트는 완료했어요!'}
+          </Text>
+          <Text style={styles.emptySubText}>내일 다시 도전해 보세요!</Text>
         </View>
       )}
 

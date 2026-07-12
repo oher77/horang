@@ -61,7 +61,7 @@ const SIREN_DURATION_MS = 1400;
 // COIN_DELAY_MS 후에 등장, 위로 살짝 떠오르며 페이드아웃. 총 소요시간을 상수로 분리해
 // 애니메이션 타이밍과 state 정리 타이머가 같은 값을 공유하게 한다(어긋나면 잔상/조기소멸
 // 버그로 이어짐).
-const COIN_DELAY_MS = 900; // 배너 등장(FadeIn 200ms) 후 이 시점에 동전 시작
+const COIN_DELAY_MS = 0; // 배너 등장(FadeIn 200ms) 후 이 시점에 동전 시작
 const COIN_DURATION_MS = 1000; // 동전 등장→상승→소멸 전체 시간
 
 type ColumnKey = 'word' | 'meaning';
@@ -132,15 +132,15 @@ export default function DayScreen() {
   // ★★★ 임시 애니메이션 미리보기 (2026-07-12) — 확인 끝나면 이 useEffect 통째로 삭제할 것 ★★★
   // 오늘 슬롯이 이미 기록돼 실제 경로로는 재생 불가라, DB를 건드리지 않고 화면 진입 1.5초 뒤
   // 배너+동전 시퀀스를 가짜로 재생한다. 화면을 나갔다 다시 들어오면 반복 재생.
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setCompletionBanner('이번 슬롯 미션 완료!');
-      setTimeout(() => setCompletionBanner(null), BANNER_DURATION_MS);
-      coinShowTimerRef.current = setTimeout(() => setCoinAmount(10), COIN_DELAY_MS);
-      coinTimerRef.current = setTimeout(() => setCoinAmount(null), COIN_DELAY_MS + COIN_DURATION_MS);
-    }, 1500);
-    return () => clearTimeout(t);
-  }, []);
+  // useEffect(() => {
+  //   const t = setTimeout(() => {
+  //     setCompletionBanner('이번 슬롯 미션 완료!');
+  //     setTimeout(() => setCompletionBanner(null), BANNER_DURATION_MS);
+  //     coinShowTimerRef.current = setTimeout(() => setCoinAmount(100), COIN_DELAY_MS);
+  //     coinTimerRef.current = setTimeout(() => setCoinAmount(null), COIN_DELAY_MS + COIN_DURATION_MS);
+  //   }, 1500);
+  //   return () => clearTimeout(t);
+  // }, []);
   // ★★★ 임시 미리보기 끝 ★★★
 
   // 트래킹 초기화 1회 가드 — 초기화 성공 후에는 words 변경(스와이프에 의한 setWords)이
