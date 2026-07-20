@@ -51,11 +51,16 @@ const DWELL_LEAVE_GRACE_MS = 3000;
 const BANNER_DURATION_MS = 2000; // 완료 피드백 배너 표시 시간
 
 // 인출모드 카운트다운 라인바 상수 (설계.md §7.3)
-const COUNTDOWN_MS_PER_WORD = 5000; // 단어수 × 5초
+// 시간 기준(2026-07-20 확정): 배지(스와이프 표시) 단어수 × 5초, 배지가 하나도 없으면
+// (사실상 첫 세션) 전체 단어수 × 5초 폴백. 배지 수는 진입/재시작 시점에 1회 계산해 고정.
+const COUNTDOWN_MS_PER_WORD = 5000;
 // 인출모드 시간 임박 사이렌 (2026-07-11 사용자 요청) — 남은 시간이 이 값 이하로 떨어지는
-// 순간 트리거, SIREN_DURATION_MS 동안 표시 후 자동으로 사라진다.
+// 순간 트리거, SIREN_DURATION_MS 동안 표시 후 자동으로 사라진다. 총 시간이
+// SIREN_MIN_TOTAL_MS 이하면 아예 예약하지 않는다(짧은 카운트다운에서 진입 직후
+// 사이렌이 뜨는 것 방지, 2026-07-20 확정).
 const SIREN_AT_REMAINING_MS = 10_000;
 const SIREN_DURATION_MS = 1400;
+const SIREN_MIN_TOTAL_MS = 15_000;
 
 // 미션 완료 동전 애니메이션 (2026-07-12 사용자 요청) — 배너 메시지가 먼저 자리 잡은 뒤
 // COIN_DELAY_MS 후에 등장, 위로 살짝 떠오르며 페이드아웃. 총 소요시간을 상수로 분리해
@@ -109,6 +114,10 @@ export default function DayScreen() {
   // 인출모드 시간 임박 사이렌 표시 여부 — 리스트 밖 형제 노드로 렌더해 renderItem deps에
   // 넣지 않는다(넣으면 사이렌 토글 때 전 행이 리렌더됨).
   const [sirenVisible, setSirenVisible] = useState(false);
+  // 인출모드 타임 오버 표시 (2026-07-20 사용자 요청) — 카운트다운 소진 시 표시, 배지를
+  // 탭하면 countdownRun을 올려 카운트다운 effect를 재실행(라인바 리셋·사이렌 재예약)한다.
+  const [timeOverVisible, setTimeOverVisible] = useState(false);
+  const [countdownRun, setCountdownRun] = useState(0);
 
   // 개별 셀 "잠깐 보이기" — dayWordId별로 컬럼 peek 타이머 관리
   const [peekMap, setPeekMap] = useState<Record<number, Partial<Record<ColumnKey, boolean>>>>({});
@@ -405,24 +414,33 @@ export default function DayScreen() {
 
   const wordCount = words?.length ?? 0;
 
-  // 인출모드 카운트다운 라인바 — 인출모드로 (재)진입할 때마다 리셋 후 단어수×5초 선형 감소.
-  // trackingEnabled와 무관한 순수 시각 장치라 복습 Day·데드존에서도 동작(설계.md §7.3).
-  // words 배열 참조 대신 wordCount(길이)에 의존해 스와이프로 인한 setWords 재발행에는 반응하지 않는다.
+  // 인출모드 카운트다운 라인바 — 인출모드로 (재)진입/재시작할 때마다 리셋 후 배지 단어수
+  // 기준 시간(상수부 주석 참조) 동안 선형 감소. trackingEnabled와 무관한 순수 시각 장치라
+  // 복습 Day·데드존에서도 동작(설계.md §7.3).
+  // words를 deps에 넣지 않고 ref로 읽는다 — 세션 중 스와이프(setWords 재발행)에 라인바가
+  // 반응하면 안 되고, 배지 수도 effect 실행 시점 1회만 계산해 고정한다(§7.1 습관 판정과 동일 방식).
+  const wordsRef = useRef<DayWordRowData[] | null>(null);
+  useEffect(() => {
+    wordsRef.current = words;
+  }, [words]);
+
   useEffect(() => {
     if (mode !== 'retrieval' || wordCount === 0) return;
     cancelAnimation(lineBarProgress);
     lineBarProgress.value = 1;
-    const duration = wordCount * COUNTDOWN_MS_PER_WORD;
+    const badgeCount = wordsRef.current?.filter((w) => w.recall_stage > 0).length ?? 0;
+    const duration = (badgeCount > 0 ? badgeCount : wordCount) * COUNTDOWN_MS_PER_WORD;
     lineBarProgress.value = withTiming(0, {
       duration,
       easing: Easing.linear,
     });
 
     // 시간 임박 사이렌 — 남은 시간이 SIREN_AT_REMAINING_MS 이하가 되는 시점에 표시,
-    // SIREN_DURATION_MS 후 자동으로 사라진다. 총 길이가 임계 이하면 예약하지 않는다.
+    // SIREN_DURATION_MS 후 자동으로 사라진다. 총 길이가 SIREN_MIN_TOTAL_MS 이하면
+    // 예약하지 않는다.
     let showTimer: ReturnType<typeof setTimeout> | null = null;
     let hideTimer: ReturnType<typeof setTimeout> | null = null;
-    if (duration > SIREN_AT_REMAINING_MS) {
+    if (duration > SIREN_MIN_TOTAL_MS) {
       showTimer = setTimeout(() => {
         setSirenVisible(true);
         hideTimer = setTimeout(() => {
@@ -431,18 +449,31 @@ export default function DayScreen() {
       }, duration - SIREN_AT_REMAINING_MS);
     }
 
+    // 소진 시 타임 오버 표시 — 탭(재시작) 또는 모드 전환/이탈 전까지 유지된다.
+    const overTimer = setTimeout(() => {
+      setTimeOverVisible(true);
+    }, duration);
+
     return () => {
       if (showTimer) clearTimeout(showTimer);
       if (hideTimer) clearTimeout(hideTimer);
+      clearTimeout(overTimer);
       setSirenVisible(false);
+      setTimeOverVisible(false);
     };
-  }, [mode, wordCount, lineBarProgress]);
+  }, [mode, wordCount, lineBarProgress, countdownRun]);
 
   // 모드 전환 — 인출모드 진입 시 뜻 컬럼만 가림(단어 컬럼은 그대로). 이후 눈 아이콘 수동
   // 조작은 이 세팅과 독립적으로 동작한다(단방향, 설계.md §4.5).
   const handleModeChange = useCallback((next: StudyMode) => {
     setMode(next);
     setColumnHidden({ word: false, meaning: next === 'retrieval' });
+  }, []);
+
+  // 타임 오버 배지 탭 → 카운트다운을 처음부터 재시작 (countdownRun 변화로 effect 재실행)
+  const handleCountdownRestart = useCallback(() => {
+    setTimeOverVisible(false);
+    setCountdownRun((n) => n + 1);
   }, []);
 
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
@@ -625,6 +656,10 @@ export default function DayScreen() {
 
       {mode === 'retrieval' && sirenVisible && <RetrievalSiren />}
 
+      {mode === 'retrieval' && timeOverVisible && (
+        <RetrievalTimeOver onRestart={handleCountdownRestart} />
+      )}
+
       <WordDetailSheet
         visible={sheetVisible}
         loading={sheetLoading}
@@ -669,7 +704,8 @@ function ModeToggle({
 }
 
 // 인출모드 카운트다운 라인바 — 버튼 아님, 순수 시각 장치(설계.md §7.3). 시간 텍스트 없이
-// scaleX만으로 단어수×5초 동안 선형 감소, 소진 시 아무 일도 일어나지 않는다.
+// scaleX만으로 배지 단어수 기준 시간(상수부 주석 참조) 동안 선형 감소, 소진 시 타임 오버
+// 표시(RetrievalTimeOver)가 뜬다.
 function RetrievalCountdownBar({ progress }: { progress: SharedValue<number> }) {
   const fillStyle = useAnimatedStyle(() => ({
     transform: [{ scaleX: progress.value }],
@@ -709,6 +745,22 @@ function RetrievalSiren() {
     <View style={styles.sirenOverlay} pointerEvents="none">
       <Animated.Text style={[styles.sirenIcon, iconStyle]}>🚨</Animated.Text>
       <Text style={styles.sirenText}>비상비상!</Text>
+      <Text style={styles.sirenSubText}>{SIREN_AT_REMAINING_MS / 1000}초 전</Text>
+    </View>
+  );
+}
+
+// 인출모드 타임 오버 표시 (2026-07-20 사용자 요청) — 카운트다운 소진 시 화면 중앙에 표시,
+// 배지를 탭하면 카운트다운을 처음부터 다시 시작한다. 컨테이너는 box-none으로 두어 배지
+// 바깥의 행 탭/스와이프를 막지 않는다. 자동 소멸 없음(탭 또는 모드 전환/이탈 시에만 사라짐).
+function RetrievalTimeOver({ onRestart }: { onRestart: () => void }) {
+  return (
+    <View style={styles.sirenOverlay} pointerEvents="box-none">
+      <Pressable style={styles.timeOverBadge} onPress={onRestart} hitSlop={8}>
+        <Text style={styles.timeOverIcon}>⏰</Text>
+        <Text style={styles.timeOverText}>타임 오버</Text>
+        <Text style={styles.timeOverHint}>탭하면 다시 시작</Text>
+      </Pressable>
     </View>
   );
 }
@@ -927,5 +979,34 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     color: '#c0392b',
+  },
+  sirenSubText: {
+    marginTop: 2,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#c0392b',
+  },
+  timeOverBadge: {
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 28,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    borderWidth: 1,
+    borderColor: '#c0392b',
+  },
+  timeOverIcon: {
+    fontSize: 56,
+  },
+  timeOverText: {
+    marginTop: 4,
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#c0392b',
+  },
+  timeOverHint: {
+    marginTop: 2,
+    fontSize: 12,
+    color: '#888',
   },
 });

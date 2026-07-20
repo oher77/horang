@@ -1,11 +1,12 @@
 /**
  * 점수 확인 애니메이션 — "코끼리가 북을 두드리는 애니메이션이 3초 진행되고 점수가
- * 짠 하고 나온다" (단어장 앱 만들기.md "테스트 화면 구성").
+ * 짠 하고 나온다" (단어장 앱 만들기.md "테스트 화면 구성". 실사용 후 2026-07-20
+ * 사용자 요청으로 2초로 단축 — DURATION_MS).
  *
  * 네이티브 이미지/스프라이트 에셋 없이(Expo Go 가드레일 — 새 에셋·서드파티 모듈 없이
  * 구현) 이모지(🐘)를 reanimated로 좌우 흔들며 "북 치는" 느낌의 리듬 애니메이션을
- * 3초간 반복한 뒤 onComplete를 호출한다. 화면에는 취소 버튼이 있어 애니메이션 도중
- * 클릭하면 채점 화면으로 되돌아간다(onCancel).
+ * DURATION_MS 동안 반복한 뒤 onComplete를 호출한다. 화면에는 취소 버튼이 있어
+ * 애니메이션 도중 클릭하면 채점 화면으로 되돌아간다(onCancel).
  */
 
 import { useEffect } from 'react';
@@ -21,7 +22,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
-const DURATION_MS = 3000;
+const DURATION_MS = 2000;
 
 interface ScoreRevealAnimationProps {
   onComplete: () => void;
