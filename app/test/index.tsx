@@ -391,9 +391,9 @@ export default function TestScreen() {
               <>
                 <Text style={[styles.headerText, styles.headerFlexCell]}>내 답</Text>
                 <Text style={[styles.headerText, styles.headerFlexCell]}>정답</Text>
-                <Text style={[styles.headerText, styles.headerSmallCell]}>발음</Text>
+                <Text style={[styles.headerText, styles.headerSmallCell]}>듣기</Text>
                 <Text style={[styles.headerText, styles.headerSmallCell]}>오답</Text>
-                <Text style={[styles.headerText, styles.headerSmallCell]}>헷갈림</Text>
+                <Text style={[styles.headerText, styles.headerSmallCell]}>발음</Text>
               </>
             )}
           </View>

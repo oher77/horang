@@ -40,6 +40,7 @@ import {
   scheduleTestNotification,
   setNotificationsEnabled,
 } from '../../lib/notifications';
+import { deleteTodayTestSession } from '../../lib/reviewQueries';
 import {
   setDifficultyLevel,
   setSlots,
@@ -117,9 +118,90 @@ export default function SettingsScreen() {
           <IncomeRulesSection />
 
           <HabitBonusSection />
+
+          {__DEV__ && <DevToolsSection />}
         </View>
       </TouchableWithoutFeedback>
     </ScrollView>
+  );
+}
+
+/**
+ * 개발용 도구 섹션 (2026-07-20) — __DEV__(Expo Go/개발 빌드)에서만 렌더되고
+ * TestFlight/배포 빌드에는 나타나지 않는다. QA 도구 모음:
+ * - 오늘 테스트 기록 삭제: "하루 1회" 게이트에 막혀 테스트 화면을 재확인할 수 없는 문제 해소
+ * - 알림 테스트: 시간대 알림 섹션에 있다가 QA 전용이라 이쪽으로 이동 (2026-07-20)
+ */
+function DevToolsSection() {
+  const [busy, setBusy] = useState(false);
+
+  const handleTestNotification = useCallback(async () => {
+    setBusy(true);
+    try {
+      const ok = await scheduleTestNotification();
+      if (ok) {
+        Alert.alert('테스트 알림 예약됨', '5초 후 알림이 옵니다. 홈 화면으로 나가서 확인해보세요.');
+      } else {
+        Alert.alert('알림 권한이 필요해요', '설정 앱에서 알림을 허용해주세요.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const handleDeleteTodayTest = useCallback(() => {
+    Alert.alert(
+      '오늘 테스트 기록 삭제',
+      '오늘 응시한 테스트 세션과 용돈 반영이 삭제되고, 테스트를 다시 볼 수 있게 됩니다.',
+      [
+        { text: '취소', style: 'cancel' },
+        {
+          text: '삭제',
+          style: 'destructive',
+          onPress: async () => {
+            setBusy(true);
+            try {
+              const deleted = await deleteTodayTestSession();
+              Alert.alert(
+                deleted > 0 ? '삭제되었습니다' : '오늘 세션이 없습니다',
+                deleted > 0
+                  ? '테스트 화면에 다시 들어가면 새로 응시할 수 있습니다.'
+                  : '오늘 응시한 테스트가 없어 삭제할 것이 없습니다.',
+              );
+            } catch (err) {
+              Alert.alert('삭제 실패', err instanceof Error ? err.message : String(err));
+            } finally {
+              setBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  }, []);
+
+  return (
+    <View style={styles.incomeSection}>
+      <Text style={styles.sectionTitle}>개발용 도구</Text>
+      <Text style={styles.sectionDesc}>
+        QA 전용 — Expo Go/개발 빌드에서만 보이고 배포 앱에는 나타나지 않습니다.
+      </Text>
+
+      <Pressable
+        style={[styles.testButton, busy && styles.testButtonDisabled]}
+        onPress={handleDeleteTodayTest}
+        disabled={busy}
+      >
+        <Text style={styles.testButtonText}>오늘 테스트 기록 삭제</Text>
+      </Pressable>
+
+      <Pressable
+        style={[styles.testButton, busy && styles.testButtonDisabled]}
+        onPress={handleTestNotification}
+        disabled={busy}
+      >
+        <Text style={styles.testButtonText}>알림 테스트 (5초 후)</Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -377,20 +459,6 @@ function NotificationSection() {
     }
   }, []);
 
-  const handleTest = useCallback(async () => {
-    setBusy(true);
-    try {
-      const ok = await scheduleTestNotification();
-      if (ok) {
-        Alert.alert('테스트 알림 예약됨', '5초 후 알림이 옵니다. 홈 화면으로 나가서 확인해보세요.');
-      } else {
-        Alert.alert('알림 권한이 필요해요', '설정 앱에서 알림을 허용해주세요.');
-      }
-    } finally {
-      setBusy(false);
-    }
-  }, []);
-
   return (
     <View style={styles.incomeSection}>
       <Text style={styles.sectionTitle}>시간대 알림</Text>
@@ -402,14 +470,6 @@ function NotificationSection() {
         <Text style={styles.incomeRowLabel}>알림 받기</Text>
         <Switch value={enabled} onValueChange={handleToggle} disabled={!loaded || busy} />
       </View>
-
-      <Pressable
-        style={[styles.testButton, busy && styles.testButtonDisabled]}
-        onPress={handleTest}
-        disabled={busy}
-      >
-        <Text style={styles.testButtonText}>알림 테스트 (5초 후)</Text>
-      </Pressable>
     </View>
   );
 }

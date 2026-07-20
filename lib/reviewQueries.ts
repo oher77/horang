@@ -200,6 +200,31 @@ export async function getTodayTestSession(): Promise<TodayTestSession | null> {
   };
 }
 
+/**
+ * __DEV__ QA 전용 (2026-07-20): 오늘(taken_day 기준) 테스트 세션·문항을 삭제해
+ * "하루 1회" 게이트를 풀고 재응시를 가능하게 한다. 설정 화면의 개발용 섹션에서만
+ * 호출되며 프로덕션 UI에는 진입점이 없다. 세션 삭제로 오늘 용돈 장부 항목
+ * (test_session의 income_amount 스냅샷)도 함께 사라진다.
+ * @returns 삭제된 세션 수 (0이면 오늘 세션 없음)
+ */
+export async function deleteTodayTestSession(): Promise<number> {
+  const userDb = getUserDb();
+  const today = todayEpochDay();
+  let deleted = 0;
+  await userDb.withTransactionAsync(async () => {
+    const rows = await userDb.getAllAsync<{ id: number }>(
+      `SELECT id FROM test_session WHERE taken_day = ?`,
+      [today],
+    );
+    for (const row of rows) {
+      await userDb.runAsync(`DELETE FROM test_item WHERE session_id = ?`, [row.id]);
+      await userDb.runAsync(`DELETE FROM test_session WHERE id = ?`, [row.id]);
+    }
+    deleted = rows.length;
+  });
+  return deleted;
+}
+
 function shuffle<T>(arr: T[]): T[] {
   const copy = [...arr];
   for (let i = copy.length - 1; i > 0; i -= 1) {
