@@ -48,11 +48,30 @@ async function getWordsPerDay(): Promise<number> {
   return row?.words_per_day ?? 20;
 }
 
+// 진행 중인 ensureTodayDay 실행을 공유하는 single-flight 가드 (initDatabases의
+// initPromise와 동일 패턴). 홈 화면 첫 마운트에서 useEffect와 useFocusEffect가 거의
+// 동시에 ensureTodayDay를 호출하는데, 오늘 Day가 없는 첫 로드에서는 양쪽 모두
+// createTodayDay의 withTransactionAsync로 진입해 같은 user.db 연결에서 트랜잭션이
+// 동시에 BEGIN된다 → expo-sqlite가 단일 연결 동시 트랜잭션을 허용하지 않아
+// "cannot rollback - no transaction is active"(원본 에러를 가리는 2차 에러)로 터진다.
+// 진행 중이면 같은 프로미스를 반환해 트랜잭션이 한 번만 돌게 하고(중복 Day 생성도 방지),
+// 완료 후 즉시 해제하므로 자정 넘김·focus 재조회 등 시간차 호출은 종전대로 매번 실행된다.
+let ensureTodayDayInFlight: Promise<DayWithWords> | null = null;
+
 /**
  * 오늘(로컬 자정 기준 epoch day) 단어장을 조회하거나, 없으면 새로 생성한다.
  * 하루 1개 규칙 + 전 Day 중복 금지(day_word.content_word_id UNIQUE)를 보장한다.
+ * 동시 호출은 single-flight 가드로 하나의 실행을 공유한다(위 주석 참고).
  */
-export async function ensureTodayDay(): Promise<DayWithWords> {
+export function ensureTodayDay(): Promise<DayWithWords> {
+  if (ensureTodayDayInFlight) return ensureTodayDayInFlight;
+  ensureTodayDayInFlight = ensureTodayDayInner().finally(() => {
+    ensureTodayDayInFlight = null;
+  });
+  return ensureTodayDayInFlight;
+}
+
+async function ensureTodayDayInner(): Promise<DayWithWords> {
   const userDb = getUserDb();
   const today = todayEpochDay();
 
