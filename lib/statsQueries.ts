@@ -10,7 +10,7 @@
 import { getContentDb, getUserDb } from './db';
 import { nowEpochMs, todayEpochDay } from './dates';
 
-/** 낯가림 단어 1건 (Q-SCARY-TOP10: 오답 1회↑ 단어, 오답횟수 내림차순 상위 10). */
+/** 낯가림 단어 1건 (Q-SCARY-TOP10: 최신 결과가 오답인 단어, 누적 오답횟수 내림차순 상위 10). */
 export interface ScaryWord {
   content_word_id: number;
   headword: string;
@@ -18,7 +18,10 @@ export interface ScaryWord {
 }
 
 /**
- * 오답(is_wrong=1) 1회 이상인 단어를 오답 횟수순으로 상위 10개 조회한다.
+ * 낯가림 Top10 — 오답(is_wrong=1) 이력이 있는 단어를 누적 오답 횟수순으로 상위 10개.
+ * 단, **최신 테스트 결과가 정답인 단어는 제외**한다 (2026-07-13 사용자 확정 — 자기정화:
+ * 외우는 순간 명단에서 빠져 "머리에 들어온 단어" 트렌드와 방향이 일치한다).
+ * "최신"의 정렬 기준(taken_ms DESC, ti.id DESC)은 getWordStateTrend와 동일 — 재채점 반영.
  * idx_testitem_wrong 부분 인덱스를 태운다 (설계.md §5 Q-SCARY-TOP10).
  */
 export async function getScaryWordsTop10(): Promise<ScaryWord[]> {
@@ -26,11 +29,16 @@ export async function getScaryWordsTop10(): Promise<ScaryWord[]> {
   const contentDb = getContentDb();
 
   const rows = await userDb.getAllAsync<{ content_word_id: number; wrong_cnt: number }>(
-    `SELECT content_word_id, COUNT(*) AS wrong_cnt
-     FROM test_item
-     WHERE is_wrong = 1
-     GROUP BY content_word_id
-     HAVING wrong_cnt >= 1
+    `SELECT ti.content_word_id AS content_word_id, COUNT(*) AS wrong_cnt
+     FROM test_item ti
+     WHERE ti.is_wrong = 1
+     GROUP BY ti.content_word_id
+     HAVING (
+       SELECT ti2.is_wrong FROM test_item ti2
+       JOIN test_session ts2 ON ts2.id = ti2.session_id
+       WHERE ti2.content_word_id = ti.content_word_id
+       ORDER BY ts2.taken_ms DESC, ti2.id DESC LIMIT 1
+     ) = 1
      ORDER BY wrong_cnt DESC
      LIMIT 10`,
   );
