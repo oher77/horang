@@ -16,10 +16,16 @@
  * getWordStateTrend(단어별 최신 상태 시계열)로 대체하며 제거했다.
  */
 
-import { Stack } from 'expo-router';
+import { router, Stack } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import {
+  DailyTrendBarChart,
+  ScoreBarChart,
+  shortDateLabel,
+  type ScoreBar,
+} from '../../components/StatCharts';
 import WordDetailSheet from '../../components/WordDetailSheet';
 import { epochDayToDateString, toEpochDay } from '../../lib/dates';
 import {
@@ -105,9 +111,6 @@ function mergeLedgerItems(
 function ledgerItemKey(item: LedgerItem): string {
   return item.kind === 'test' ? `test-${item.session.sessionId}` : `habit-${item.bonus.id}`;
 }
-
-const BAR_MAX_HEIGHT = 80;
-const TREND_MAX_HEIGHT = 60;
 
 // 실기기 QA 피드백(B): 장부 리스트는 화면에 최신 30건까지만 렌더한다. DB 삭제는
 // 절대 하지 않는다 — 월별 Income 차트·합계는 잘리지 않은 전체 데이터에서 계산되므로
@@ -275,6 +278,10 @@ export default function AchievementsScreen() {
       <ScrollView style={styles.scroll} contentContainerStyle={styles.container}>
         <Stack.Screen options={{ title: '내 자랑스런 업적' }} />
 
+        <Pressable style={styles.bragButton} onPress={() => router.push('/brag')}>
+          <Text style={styles.bragButtonText}>🎉 자랑하기</Text>
+        </Pressable>
+
         <IncomeSection
           monthlyIncome={monthlyIncome}
           monthTotal={monthTotal + habitBonusTotal}
@@ -323,24 +330,16 @@ function RecentScoresSection({ scores, error }: { scores: RecentScore[] | null; 
       )}
 
       {!error && scores && scores.length > 0 && (
-        <View style={styles.barRow}>
-          {/* Q-RECENT5는 최신순(DESC)으로 오므로, 그래프는 시간 흐름대로 보이도록 뒤집는다. */}
-          {[...scores].reverse().map((item) => {
-            const score = item.score100 ?? 0;
-            const barHeight = Math.max((score / 100) * BAR_MAX_HEIGHT, 2);
-            return (
-              <View key={item.session_id} style={styles.barItem}>
-                <Text style={styles.barScoreLabel}>{item.score100 ?? '-'}</Text>
-                <View style={styles.barTrack}>
-                  <View style={[styles.barFill, { height: barHeight }]} />
-                </View>
-                <Text style={styles.barDateLabel}>
-                  {shortDateLabel(toEpochDay(new Date(item.taken_ms)))}
-                </Text>
-              </View>
-            );
-          })}
-        </View>
+        // Q-RECENT5는 최신순(DESC)으로 오므로, 그래프는 시간 흐름대로 보이도록 뒤집는다.
+        <ScoreBarChart
+          bars={[...scores].reverse().map<ScoreBar>((item) => ({
+            key: String(item.session_id),
+            value: item.score100 ?? 0,
+            topLabel: String(item.score100 ?? '-'),
+            bottomLabel: shortDateLabel(toEpochDay(new Date(item.taken_ms))),
+          }))}
+          emptyText="최근 5일간 치른 테스트가 없어요."
+        />
       )}
     </View>
   );
@@ -387,67 +386,6 @@ function ScaryWordsSection({
   );
 }
 
-/**
- * WordsIn/WordsOut 공용 일별 30일 추이 막대 그래프 (View 기반, 라이브러리 없음).
- * y스케일은 시리즈 최댓값 기준 정규화하고, 최댓값이 0이면 플레이스홀더 텍스트로
- * 대체한다. 값 라벨은 마지막(오늘) 막대 위에만 표시한다. 날짜 라벨은 막대 슬롯
- * (화면폭÷30 ≈ 12px)에 넣으면 말줄임돼 "0…"로 보이므로, 차트 아래 별도 행에
- * 첫날/중간/오늘 3개만 좌/중/우 정렬로 표시한다.
- */
-/** epoch day → "7/10" 축약 날짜 라벨 (앞자리 0 제거). */
-function shortDateLabel(day: number): string {
-  const [, month, date] = epochDayToDateString(day).split('-');
-  return `${Number(month)}/${Number(date)}`;
-}
-
-function DailyTrendBarChart({
-  points,
-  valueOf,
-  color,
-}: {
-  points: WordStatePoint[];
-  valueOf: (p: WordStatePoint) => number;
-  color: string;
-}) {
-  const values = points.map(valueOf);
-  const max = Math.max(0, ...values);
-
-  if (max === 0) {
-    return <Text style={styles.emptyText}>아직 테스트 기록이 없어요.</Text>;
-  }
-
-  const midIndex = Math.floor((points.length - 1) / 2);
-
-  return (
-    <View>
-      <View style={styles.trendRow}>
-        {points.map((p, index) => {
-          const value = valueOf(p);
-          const barHeight = value > 0 ? Math.max((value / max) * TREND_MAX_HEIGHT, 2) : 0;
-          const isLast = index === points.length - 1;
-          return (
-            <View key={p.day} style={styles.trendBarItem}>
-              {/* 마지막 슬롯 폭(~12px)에 갇히면 숫자가 잘리므로, 고정폭 우측정렬로
-                  차트 안쪽(왼쪽)을 향해 넘치게 한다. */}
-              <Text style={[styles.trendValueLabel, isLast && styles.trendValueLabelLast]}>
-                {isLast ? value : ''}
-              </Text>
-              <View style={styles.trendBarTrack}>
-                <View style={[styles.trendBarFill, { height: barHeight, backgroundColor: color }]} />
-              </View>
-            </View>
-          );
-        })}
-      </View>
-      <View style={styles.trendDateRow}>
-        <Text style={styles.trendDateLabel}>{shortDateLabel(points[0].day)}</Text>
-        <Text style={styles.trendDateLabel}>{shortDateLabel(points[midIndex].day)}</Text>
-        <Text style={styles.trendDateLabel}>{shortDateLabel(points[points.length - 1].day)}</Text>
-      </View>
-    </View>
-  );
-}
-
 function WordsInSection({ trend, error }: { trend: WordStatePoint[] | null; error: string | null }) {
   return (
     <View style={styles.section}>
@@ -477,30 +415,18 @@ function WordsOutSection({ trend, error }: { trend: WordStatePoint[] | null; err
   );
 }
 
-/** 용돈 장부 상단의 월별 Income 추이 미니 막대 그래프 — RecentScoresSection의 View-바 패턴 재사용. */
+/** 용돈 장부 상단의 월별 Income 추이 미니 막대 그래프 — 공용 ScoreBarChart 재사용. */
 function IncomeTrendMiniChart({ points }: { points: MonthlyIncomePoint[] }) {
-  const max = Math.max(0, ...points.map((p) => p.total));
-
-  if (max === 0) {
-    return <Text style={styles.emptyText}>최근 {points.length}개월간 Income 기록이 없어요.</Text>;
-  }
-
   return (
-    <View style={styles.barRow}>
-      {points.map((p) => {
-        const barHeight = p.total > 0 ? Math.max((p.total / max) * BAR_MAX_HEIGHT, 2) : 0;
-        const month = Number(p.yearMonth.split('-')[1]);
-        return (
-          <View key={p.yearMonth} style={styles.barItem}>
-            <Text style={styles.barScoreLabel}>{p.total > 0 ? p.total.toLocaleString() : ''}</Text>
-            <View style={styles.barTrack}>
-              <View style={[styles.barFill, { height: barHeight }]} />
-            </View>
-            <Text style={styles.barDateLabel}>{month}월</Text>
-          </View>
-        );
-      })}
-    </View>
+    <ScoreBarChart
+      bars={points.map<ScoreBar>((p) => ({
+        key: p.yearMonth,
+        value: p.total,
+        topLabel: p.total > 0 ? p.total.toLocaleString() : '',
+        bottomLabel: `${Number(p.yearMonth.split('-')[1])}월`,
+      }))}
+      emptyText={`최근 ${points.length}개월간 Income 기록이 없어요.`}
+    />
   );
 }
 
@@ -714,76 +640,16 @@ const styles = StyleSheet.create({
   loading: {
     marginVertical: 12,
   },
-  barRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'flex-end',
-    marginBottom: 16,
-  },
-  barItem: {
-    alignItems: 'center',
-    width: 48,
-  },
-  barScoreLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#444',
-    marginBottom: 4,
-  },
-  barTrack: {
-    width: 20,
-    height: BAR_MAX_HEIGHT,
-    justifyContent: 'flex-end',
-  },
-  barFill: {
-    width: 20,
-    borderRadius: 4,
+  bragButton: {
     backgroundColor: '#ff8a34',
-  },
-  barDateLabel: {
-    marginTop: 6,
-    fontSize: 11,
-    color: '#999',
-  },
-  trendRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-  },
-  trendBarItem: {
-    flex: 1,
+    borderRadius: 12,
+    paddingVertical: 14,
     alignItems: 'center',
   },
-  trendBarTrack: {
-    width: 4,
-    height: TREND_MAX_HEIGHT,
-    justifyContent: 'flex-end',
-  },
-  trendBarFill: {
-    width: 4,
-    borderRadius: 2,
-  },
-  trendValueLabel: {
-    fontSize: 10,
+  bragButtonText: {
+    color: '#fff',
+    fontSize: 16,
     fontWeight: '700',
-    color: '#444',
-    marginBottom: 2,
-    height: 14,
-  },
-  trendValueLabelLast: {
-    width: 44,
-    textAlign: 'right',
-    alignSelf: 'flex-end',
-  },
-
-  trendDateRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 4,
-  },
-  trendDateLabel: {
-    fontSize: 9,
-    color: '#999',
   },
   scaryList: {
     gap: 8,
