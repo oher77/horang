@@ -33,7 +33,7 @@ import Animated, {
 import { captureRef } from 'react-native-view-shot';
 import * as Sharing from 'expo-sharing';
 
-import { DailyTrendBarChart, ScoreBarChart, shortDateLabel, type ScoreBar } from '../../components/StatCharts';
+import { AssetCurveChart, ScoreBarChart, shortDateLabel, type ScoreBar } from '../../components/StatCharts';
 import { getBragReport, WINDOW_DAYS, type BragReport } from '../../lib/bragQueries';
 import { toEpochDay, todayEpochDay } from '../../lib/dates';
 
@@ -99,7 +99,7 @@ export default function BragScreen() {
       const uri = await captureRef(cardRef, { format: 'png', quality: 1, result: 'tmpfile' });
       await Sharing.shareAsync(uri, {
         mimeType: 'image/png',
-        dialogTitle: '호랑이 잉글리시 학습 리포트',
+        dialogTitle: '호랑이 잉글리시 자랑하기 리포트',
         UTI: 'public.png',
       });
       // 공유 시트가 닫히면(전송·취소 모두) 발사 완료로 보고 축포를 터뜨린다.
@@ -140,7 +140,7 @@ export default function BragScreen() {
             {/* 캡처 대상: 흰 배경 카드 묶음 */}
             <View ref={cardRef} collapsable={false} style={styles.card}>
               <View style={styles.cardHeader}>
-                <Text style={styles.cardHeaderTitle}>🐯 호랑이 잉글리시 학습 리포트</Text>
+                <Text style={styles.cardHeaderTitle}>🐯 호랑이 잉글리시 자랑하기 리포트</Text>
                 <Text style={styles.cardHeaderPeriod}>{periodLabel}</Text>
               </View>
 
@@ -196,7 +196,7 @@ export default function BragScreen() {
                   )}
 
                   {report.memorizedNow > 0 && (
-                    <StatBlock emoji="🧠" title="장기기억에 저장된 단어">
+                    <StatBlock emoji="🧠" title="암기 자산 곡선">
                       <View style={styles.numberRow}>
                         <Text style={styles.bigNumber}>{report.memorizedNow}개</Text>
                         {report.memorizedDelta > 0 && (
@@ -204,12 +204,11 @@ export default function BragScreen() {
                         )}
                       </View>
                       <Text style={styles.blockCaption}>
-                        가장 최근 테스트에서 정답으로 확인된 단어 수입니다.
+                        장기기억에 저장된 단어 — 가장 최근 테스트에서 정답으로 확인된 단어 수입니다.
                       </Text>
-                      <DailyTrendBarChart
+                      <AssetCurveChart
                         points={report.memorizedTrend.slice(-CARD_TREND_DAYS)}
                         valueOf={(p) => p.correctCount}
-                        color="#2e7d32"
                       />
                     </StatBlock>
                   )}
@@ -265,6 +264,19 @@ export default function BragScreen() {
                       </Text>
                       <Text style={styles.blockCaption}>
                         테스트 점수와 습관 보너스로 적립된 금액입니다.
+                      </Text>
+                    </StatBlock>
+                  )}
+
+                  {report.costPerWord !== null && (
+                    <StatBlock emoji="🧾" title="이번 달 단어당 비용">
+                      <Text style={styles.bigNumber}>
+                        {report.costPerWord.toLocaleString()}원
+                      </Text>
+                      <Text style={styles.blockCaption}>
+                        이번 달 적립 용돈 {report.monthIncomeTotal.toLocaleString()}원 ÷ 새로 암기한
+                        단어 {report.monthMemorizedGain}개. 단어 하나를 장기기억에 남기는 데 든
+                        비용입니다.
                       </Text>
                     </StatBlock>
                   )}

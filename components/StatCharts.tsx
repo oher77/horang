@@ -1,12 +1,14 @@
 /**
- * 통계 차트 공용 컴포넌트 (라이브러리 없이 순수 View 기반).
+ * 통계 차트 공용 컴포넌트.
  *
  * 업적 화면([app/achievements/index.tsx])과 자랑 리포트 화면([app/brag/index.tsx])이
- * 공유한다. FlashList 등 서드파티 모듈 없이 RN 내장 View로만
- * 그린다는 §4.5 가드레일을 그대로 따른다.
+ * 공유한다. 막대류는 RN 내장 View로 그리고(§4.5 가드레일), 곡선이 필요한
+ * AssetCurveChart만 react-native-svg를 쓴다(Expo Go 번들 포함 모듈).
  */
 
-import { StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import { StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
+import Svg, { Circle, Line, Path } from 'react-native-svg';
 
 import { epochDayToDateString } from '../lib/dates';
 import type { WordStatePoint } from '../lib/statsQueries';
@@ -75,6 +77,115 @@ export function DailyTrendBarChart({
   );
 }
 
+const CURVE_HEIGHT = 96;
+const CURVE_PAD_X = 14;
+const CURVE_PAD_Y = 18;
+
+/**
+ * 점들을 부드러운 곡선 path(d 속성)로 잇는다. 각 구간의 중간 x를 제어점으로 쓰는
+ * 표준 방식 — 꺾임 없이 이어지면서 원래 값을 정확히 지난다.
+ */
+function smoothPath(pts: { x: number; y: number }[]): string {
+  if (pts.length === 0) return '';
+  let d = `M ${pts[0].x} ${pts[0].y}`;
+  for (let i = 1; i < pts.length; i += 1) {
+    const prev = pts[i - 1];
+    const cur = pts[i];
+    const midX = (prev.x + cur.x) / 2;
+    d += ` C ${midX} ${prev.y}, ${midX} ${cur.y}, ${cur.x} ${cur.y}`;
+  }
+  return d;
+}
+
+/**
+ * 암기 자산 곡선 — 우상향 추세를 한눈에 보여주는 미니 라인 차트.
+ * 축·격자 없이 시작/끝 값만 라벨로 찍고, 최고점 높이에 점선 기준선을 둔다.
+ * 폭은 onLayout으로 측정해 카드 폭에 맞춘다.
+ */
+export function AssetCurveChart({
+  points,
+  valueOf,
+  unit = '단어',
+  emptyText = '아직 기록이 부족해요.',
+}: {
+  points: WordStatePoint[];
+  valueOf: (p: WordStatePoint) => number;
+  unit?: string;
+  emptyText?: string;
+}) {
+  const [width, setWidth] = useState(0);
+  const onLayout = (e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width);
+
+  const values = points.map(valueOf);
+  const enoughData = values.length >= 2 && Math.max(...values) > 0;
+
+  return (
+    <View style={styles.curveWrap} onLayout={onLayout}>
+      {!enoughData ? (
+        <Text style={styles.emptyText}>{emptyText}</Text>
+      ) : (
+        width > 0 && <CurveBody width={width} values={values} unit={unit} />
+      )}
+    </View>
+  );
+}
+
+function CurveBody({ width, values, unit }: { width: number; values: number[]; unit: string }) {
+  const innerW = Math.max(1, width - CURVE_PAD_X * 2);
+  const innerH = CURVE_HEIGHT - CURVE_PAD_Y * 2;
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  // 값이 전부 같으면(span 0) 0으로 나누지 않도록 중앙 높이에 평평하게 그린다.
+  const span = max - min || 1;
+
+  const pts = values.map((v, i) => ({
+    x: CURVE_PAD_X + (i / (values.length - 1)) * innerW,
+    y: CURVE_PAD_Y + (1 - (v - min) / span) * innerH,
+  }));
+
+  const first = pts[0];
+  const last = pts[pts.length - 1];
+  const startValue = values[0];
+  const endValue = values[values.length - 1];
+
+  return (
+    <View>
+      <Svg width={width} height={CURVE_HEIGHT}>
+        {/* 최고점 기준선 — 곡선이 어디까지 올라왔는지 눈으로 잡아주는 점선 */}
+        <Line
+          x1={CURVE_PAD_X}
+          y1={CURVE_PAD_Y}
+          x2={width - CURVE_PAD_X}
+          y2={CURVE_PAD_Y}
+          stroke="#E7D5AC"
+          strokeWidth={1}
+          strokeDasharray="4 4"
+        />
+        <Path
+          d={smoothPath(pts)}
+          stroke="#E09B2D"
+          strokeWidth={3}
+          strokeLinecap="round"
+          fill="none"
+        />
+        <Circle cx={first.x} cy={first.y} r={4} fill="#E09B2D" />
+        <Circle cx={last.x} cy={last.y} r={5} fill="#E09B2D" />
+      </Svg>
+
+      {/* 값 라벨은 SVG Text 대신 RN Text로 — 폰트·자간이 앱의 다른 숫자와 동일해진다. */}
+      <Text style={[styles.curveStartLabel, { left: CURVE_PAD_X }]}>
+        {startValue}
+        {unit}
+      </Text>
+      <Text style={[styles.curveEndLabel, { right: CURVE_PAD_X }]}>
+        {endValue}
+        {unit}
+      </Text>
+    </View>
+  );
+}
+
 /** 막대 그래프 1칸 데이터 — 값, 상단 값 라벨, 하단 x축 라벨. */
 export interface ScoreBar {
   key: string;
@@ -116,6 +227,28 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 13,
     color: '#999',
+  },
+  curveWrap: {
+    backgroundColor: '#FFF9EE',
+    borderRadius: 10,
+    paddingVertical: 4,
+    justifyContent: 'center',
+    minHeight: CURVE_HEIGHT,
+  },
+  // 시작값은 곡선 왼쪽 아래에, 끝값은 오른쪽 위에 — 우상향 흐름을 시선으로 따라가게 한다.
+  curveStartLabel: {
+    position: 'absolute',
+    bottom: 0,
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#A98B5B',
+  },
+  curveEndLabel: {
+    position: 'absolute',
+    top: -2,
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#3A2D16',
   },
   barRow: {
     flexDirection: 'row',

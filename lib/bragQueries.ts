@@ -63,6 +63,13 @@ export interface BragReport {
   unpaidTotal: number;
   /** 미지급 건수. */
   unpaidCount: number;
+  /** 이번 달(1일 이후) 새로 암기한 단어 수. 단어당 비용의 분모. */
+  monthMemorizedGain: number;
+  /**
+   * 이번 달 암기 단어 1개당 든 용돈(원, 반올림). monthIncomeTotal ÷ monthMemorizedGain.
+   * 둘 중 하나라도 0 이하면 계산이 무의미하므로 null.
+   */
+  costPerWord: number | null;
 }
 
 /** 델타 계산 창(일). "이번 주" = 오늘 포함 최근 7일(화면 기간 라벨과 동일 구간). */
@@ -71,10 +78,22 @@ export const WINDOW_DAYS = 7;
 /** 하루 인출 슬롯 수 (§7.1 — 하루 4회 분산 인출). */
 const SLOTS_PER_DAY = 4;
 
+/**
+ * 추이 조회 길이(일). 캘린더 월 시작 직전(최대 31일 전)까지 반드시 포함해야
+ * "이번 달 증가분"을 계산할 수 있으므로 한 달보다 넉넉히 잡는다.
+ */
+const TREND_DAYS = 40;
+
 /** 'YYYY-MM' 이번 달 키 (로컬타임). habit_bonus 월 합계 조회용. */
 function currentYearMonth(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/** 이번 달 1일의 epoch day (로컬 기준). */
+function monthStartEpochDay(): number {
+  const d = new Date();
+  return toEpochDay(new Date(d.getFullYear(), d.getMonth(), 1));
 }
 
 /**
@@ -153,7 +172,7 @@ export async function getBragReport(): Promise<BragReport> {
     unpaidBonuses,
   ] = await Promise.all([
     getCurrentStreak(),
-    getWordStateTrend(30),
+    getWordStateTrend(TREND_DAYS),
     getRecentScores(),
     getPronunciationLedger(),
     getMonthIncomeTotal(),
@@ -192,6 +211,17 @@ export async function getBragReport(): Promise<BragReport> {
     unpaidBonuses.reduce((sum, b) => sum + b.amount, 0);
   const unpaidCount = unpaidSessions.length + unpaidBonuses.length;
 
+  // 단어당 비용 — 용돈이 이번 달 기준이므로 분모도 이번 달 증가분으로 맞춘다.
+  // 기준선은 전월 말일(= 1일 직전)이라야 "이번 달에 늘어난 양"이 된다.
+  const baselineDay = monthStartEpochDay() - 1;
+  const baseline = trend.find((p) => p.day === baselineDay) ?? trend[0] ?? null;
+  const monthMemorizedGain = last && baseline ? last.correctCount - baseline.correctCount : 0;
+  const monthIncomeTotal = testIncome + habitBonusIncome;
+  const costPerWord =
+    monthMemorizedGain > 0 && monthIncomeTotal > 0
+      ? Math.round(monthIncomeTotal / monthMemorizedGain)
+      : null;
+
   return {
     streak,
     memorizedNow,
@@ -203,12 +233,14 @@ export async function getBragReport(): Promise<BragReport> {
     scoreBest,
     pronResolvedRecent,
     pronResolvedTotal,
-    monthIncomeTotal: testIncome + habitBonusIncome,
+    monthIncomeTotal,
     missionDone: mission.done,
     missionTotal: mission.total,
     learnedWordsTotal: learned.total,
     learnedWordsRecent: learned.recent,
     unpaidTotal,
     unpaidCount,
+    monthMemorizedGain,
+    costPerWord,
   };
 }
