@@ -77,9 +77,14 @@ export function DailyTrendBarChart({
   );
 }
 
-const CURVE_HEIGHT = 96;
+const CURVE_HEIGHT = 112;
 const CURVE_PAD_X = 14;
-const CURVE_PAD_Y = 18;
+/**
+ * 곡선이 그려지는 영역의 상하 여백. 위쪽에는 최고점 값 라벨이 얹히므로 라벨 높이만큼
+ * 확보돼야 위 요소(제목·증감 배지)와 붙어 보이지 않는다. CURVE_HEIGHT도 함께 키워
+ * 곡선 자체의 진폭(innerH)은 유지한다.
+ */
+const CURVE_PAD_Y = 26;
 
 /**
  * 점들을 부드러운 곡선 path(d 속성)로 잇는다. 각 구간의 중간 x를 제어점으로 쓰는
@@ -231,23 +236,24 @@ const styles = StyleSheet.create({
   curveWrap: {
     backgroundColor: '#FFF9EE',
     borderRadius: 10,
-    paddingVertical: 4,
+    paddingVertical: 8,
     justifyContent: 'center',
     minHeight: CURVE_HEIGHT,
   },
   // 시작값은 곡선 왼쪽 아래에, 끝값은 오른쪽 위에 — 우상향 흐름을 시선으로 따라가게 한다.
+  // 두 라벨 모두 크림 박스 안쪽에 두어 위아래 요소와 붙지 않게 한다.
   curveStartLabel: {
     position: 'absolute',
-    bottom: 0,
+    bottom: 2,
     fontSize: 11,
     fontWeight: '600',
     color: '#A98B5B',
   },
   curveEndLabel: {
     position: 'absolute',
-    top: -2,
+    top: 2,
     fontSize: 15,
-    fontWeight: '800',
+    fontWeight: '700',
     color: '#3A2D16',
   },
   barRow: {

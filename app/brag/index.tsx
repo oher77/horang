@@ -33,12 +33,72 @@ import Animated, {
 import { captureRef } from 'react-native-view-shot';
 import * as Sharing from 'expo-sharing';
 
-import { AssetCurveChart, ScoreBarChart, shortDateLabel, type ScoreBar } from '../../components/StatCharts';
+import { AssetCurveChart, shortDateLabel } from '../../components/StatCharts';
 import { getBragReport, WINDOW_DAYS, type BragReport } from '../../lib/bragQueries';
-import { toEpochDay, todayEpochDay } from '../../lib/dates';
+import { todayEpochDay } from '../../lib/dates';
 
 /** 카드 차트에 보여줄 추이 길이(일). 30일 전체는 카드에 과하게 촘촘해 최근 구간만 쓴다. */
 const CARD_TREND_DAYS = 14;
+
+/**
+ * 그리드에 실을 지표 개수. 카톡 말풍선에서 잘리지 않으려면 이미지가 대략 1:1.3 이내여야
+ * 해서, 조건을 만족하는 지표를 전부 싣지 않고 상위 N개만 고른다.
+ */
+const GRID_TILE_COUNT = 4;
+
+/** 포스터 그리드 1칸. */
+interface Tile {
+  key: string;
+  emoji: string;
+  label: string;
+  value: string;
+  sub: string;
+}
+
+/**
+ * 그리드에 올릴 지표를 고른다. 값이 유효한 것만 남기고 **우선순위 순으로 앞에서 N개**를
+ * 자른다 — 단위가 제각각(일·개·점·원)이라 점수화 비교가 불가능하므로, 부모에게 잘 꽂히는
+ * 순서를 편집 판단으로 고정했다. 순서를 바꾸려면 이 배열 순서만 바꾸면 된다.
+ */
+function buildTiles(r: BragReport): Tile[] {
+  const missionRate =
+    r.missionTotal > 0 ? Math.round((r.missionDone / r.missionTotal) * 100) : 0;
+
+  const candidates: (Tile | null)[] = [
+    r.streak >= 1
+      ? { key: 'streak', emoji: '🔥', label: '연속 학습', value: `${r.streak}일`, sub: '4회 모두 채운 날' }
+      : null,
+    r.conqueredCount > 0
+      ? { key: 'conquer', emoji: '⚔️', label: '정복한 단어', value: `+${r.conqueredCount}개`, sub: '오답 → 정답 전환' }
+      : null,
+    r.scoreAvg !== null
+      ? { key: 'score', emoji: '💯', label: '최근 테스트', value: `평균 ${r.scoreAvg}점`, sub: `최고 ${r.scoreBest ?? '-'}점` }
+      : null,
+    r.costPerWord !== null
+      ? { key: 'cost', emoji: '🧾', label: '단어당 비용', value: `${r.costPerWord.toLocaleString()}원`, sub: `이번 달 ${r.monthMemorizedGain}개 기준` }
+      : null,
+    r.missionDone > 0
+      ? { key: 'mission', emoji: '⏰', label: '분산 학습', value: `${r.missionDone}/${r.missionTotal}칸`, sub: `${missionRate}% 달성` }
+      : null,
+    r.pronResolvedRecent > 0
+      ? { key: 'pron', emoji: '🗣️', label: '정복한 발음', value: `+${r.pronResolvedRecent}개`, sub: '헷갈리던 발음 해결' }
+      : null,
+    r.learnedWordsTotal > 0
+      ? {
+          key: 'learned',
+          emoji: '📚',
+          label: '누적 학습 단어',
+          value: `${r.learnedWordsTotal}개`,
+          sub: r.learnedWordsRecent > 0 ? `이번 주 +${r.learnedWordsRecent}` : '학습 시작 기준',
+        }
+      : null,
+    r.monthIncomeTotal > 0
+      ? { key: 'income', emoji: '💰', label: '이번 달 용돈', value: `${r.monthIncomeTotal.toLocaleString()}원`, sub: '테스트+습관 보너스' }
+      : null,
+  ];
+
+  return candidates.filter((t): t is Tile => t !== null).slice(0, GRID_TILE_COUNT);
+}
 
 // "자랑 발사 🚀" 완료 축포 — 공유 시트가 닫히면 화면 하단에서 로켓이 부채꼴로 터진다.
 // ① 확산(감속) → ② 이탈(일부는 낙하, 일부는 가던 방향으로 가속해 화면 밖으로).
@@ -122,6 +182,8 @@ export default function BragScreen() {
       report.recentScores.length > 0 ||
       report.monthIncomeTotal > 0);
 
+  const tiles = useMemo(() => (report ? buildTiles(report) : []), [report]);
+
   // 기간 라벨: 최근 WINDOW_DAYS ~ 오늘.
   const today = todayEpochDay();
   const periodLabel = `${shortDateLabel(today - (WINDOW_DAYS - 1))} – ${shortDateLabel(today)}`;
@@ -140,7 +202,7 @@ export default function BragScreen() {
             {/* 캡처 대상: 흰 배경 카드 묶음 */}
             <View ref={cardRef} collapsable={false} style={styles.card}>
               <View style={styles.cardHeader}>
-                <Text style={styles.cardHeaderTitle}>🐯 호랑이 잉글리시 자랑하기 리포트</Text>
+                <Text style={styles.cardHeaderTitle}>{/*🐯 */}호랑이 잉글리시 자랑하기 리포트</Text>
                 <Text style={styles.cardHeaderPeriod}>{periodLabel}</Text>
               </View>
 
@@ -155,148 +217,60 @@ export default function BragScreen() {
                 </View>
               ) : (
                 <>
-                  {report.streak >= 1 && (
-                    <StatBlock emoji="🔥" title="연속 학습">
-                      <Text style={styles.bigNumber}>{report.streak}일 연속</Text>
-                      <Text style={styles.blockCaption}>
-                        하루 4회 인출을 모두 채운 날만 셉니다.
-                      </Text>
-                    </StatBlock>
-                  )}
-
-                  {report.missionDone > 0 && (
-                    <StatBlock emoji="⏰" title="이번 주 분산 학습 미션">
-                      <View style={styles.numberRow}>
-                        <Text style={styles.bigNumber}>
-                          {report.missionDone}
-                          <Text style={styles.numberSuffix}>/{report.missionTotal}칸</Text>
-                        </Text>
-                        {report.missionTotal > 0 && (
-                          <Text style={styles.deltaUp}>
-                            {Math.round((report.missionDone / report.missionTotal) * 100)}%
-                          </Text>
-                        )}
-                      </View>
-                      <Text style={styles.blockCaption}>
-                        몰아서 한 번보다 나눠서 여러 번이 장기 기억에 유리합니다.
-                      </Text>
-                    </StatBlock>
-                  )}
-
-                  {report.learnedWordsTotal > 0 && (
-                    <StatBlock emoji="📚" title="누적 학습 단어">
-                      <View style={styles.numberRow}>
-                        <Text style={styles.bigNumber}>{report.learnedWordsTotal}개</Text>
-                        {report.learnedWordsRecent > 0 && (
-                          <Text style={styles.deltaUp}>이번 주 +{report.learnedWordsRecent}</Text>
-                        )}
-                      </View>
-                      <Text style={styles.blockCaption}>실제로 학습을 시작한 단어장 기준입니다.</Text>
-                    </StatBlock>
-                  )}
-
+                  {/* 히어로 — 곡선은 이 리포트의 간판 지표라 유일하게 전체 폭을 쓴다. */}
                   {report.memorizedNow > 0 && (
-                    <StatBlock emoji="🧠" title="암기 자산 곡선">
-                      <View style={styles.numberRow}>
-                        <Text style={styles.bigNumber}>{report.memorizedNow}개</Text>
+                    <View style={styles.hero}>
+                      <View style={styles.heroHead}>
+                        <Text style={styles.heroTitle}>🧠 암기 자산 곡선</Text>
                         {report.memorizedDelta > 0 && (
                           <Text style={styles.deltaUp}>이번 주 +{report.memorizedDelta}</Text>
                         )}
                       </View>
-                      <Text style={styles.blockCaption}>
-                        장기기억에 저장된 단어 — 가장 최근 테스트에서 정답으로 확인된 단어 수입니다.
-                      </Text>
                       <AssetCurveChart
                         points={report.memorizedTrend.slice(-CARD_TREND_DAYS)}
                         valueOf={(p) => p.correctCount}
                       />
-                    </StatBlock>
-                  )}
-
-                  {report.conqueredCount > 0 && (
-                    <StatBlock emoji="⚔️" title="이번 주에 정복한 단어">
-                      <Text style={styles.conquerNumber}>+{report.conqueredCount}개</Text>
-                      <Text style={styles.blockCaption}>
-                        오답이던 단어가 정답으로 뒤집힌 수입니다. 배울수록 늘기 마련인
-                        &apos;안 외워진 단어&apos;를 오히려 줄였습니다.
+                      <Text style={styles.heroCaption}>
+                        장기기억에 저장된 단어 — 최근 테스트에서 정답으로 확인된 단어
                       </Text>
-                    </StatBlock>
+                    </View>
                   )}
 
-                  {report.pronResolvedRecent > 0 && (
-                    <StatBlock emoji="🗣️" title="정복한 발음">
-                      <Text style={styles.bigNumber}>+{report.pronResolvedRecent}개</Text>
-                      <Text style={styles.blockCaption}>
-                        발음이 헷갈린다고 표시했다가 스스로 해결한 단어입니다
-                        {report.pronResolvedTotal > report.pronResolvedRecent
-                          ? `. 누적 ${report.pronResolvedTotal}개`
-                          : ''}
-                        .
-                      </Text>
-                    </StatBlock>
-                  )}
-
-                  {report.recentScores.length > 0 && (
-                    <StatBlock emoji="💯" title="최근 5일 점수">
-                      {(report.scoreAvg !== null || report.scoreBest !== null) && (
-                        <Text style={styles.blockCaption}>
-                          평균 {report.scoreAvg ?? '-'}점 · 최고 {report.scoreBest ?? '-'}점
+                  {/* 나머지 지표는 2열 그리드. 홀수 개면 마지막 칸이 폭을 채운다. */}
+                  <View style={styles.grid}>
+                    {tiles.map((t) => (
+                      <View key={t.key} style={styles.tile}>
+                        <Text style={styles.tileLabel} numberOfLines={1}>
+                          {t.emoji} {t.label}
                         </Text>
-                      )}
-                      <ScoreBarChart
-                        bars={[...report.recentScores].reverse().map<ScoreBar>((item) => ({
-                          key: String(item.session_id),
-                          value: item.score100 ?? 0,
-                          topLabel: String(item.score100 ?? '-'),
-                          bottomLabel: shortDateLabel(toEpochDay(new Date(item.taken_ms))),
-                        }))}
-                        emptyText="최근 5일간 치른 테스트가 없어요."
-                      />
-                    </StatBlock>
-                  )}
-
-                  {/* 다른 카드는 주간이지만 이 항목만 월 기준(주간 합계 쿼리 없음) —
-                      오해가 없도록 제목에 "이번 달"을 명시한다. */}
-                  {report.monthIncomeTotal > 0 && (
-                    <StatBlock emoji="💰" title="이번 달 적립 용돈">
-                      <Text style={styles.bigNumber}>
-                        {report.monthIncomeTotal.toLocaleString()}원
-                      </Text>
-                      <Text style={styles.blockCaption}>
-                        테스트 점수와 습관 보너스로 적립된 금액입니다.
-                      </Text>
-                    </StatBlock>
-                  )}
-
-                  {report.costPerWord !== null && (
-                    <StatBlock emoji="🧾" title="이번 달 단어당 비용">
-                      <Text style={styles.bigNumber}>
-                        {report.costPerWord.toLocaleString()}원
-                      </Text>
-                      <Text style={styles.blockCaption}>
-                        이번 달 적립 용돈 {report.monthIncomeTotal.toLocaleString()}원 ÷ 새로 암기한
-                        단어 {report.monthMemorizedGain}개. 단어 하나를 장기기억에 남기는 데 든
-                        비용입니다.
-                      </Text>
-                    </StatBlock>
-                  )}
+                        <Text style={styles.tileValue} numberOfLines={1}>
+                          {t.value}
+                        </Text>
+                        <Text style={styles.tileSub} numberOfLines={1}>
+                          {t.sub}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
                 </>
               )}
 
-              {/* 미지급 용돈 안내 — 자랑 지표가 아니라 부모님에게 전하는 알림이라
-                  항상 맨 아래에 두고 색·톤을 구분한다(hasAnyBrag 판정에도 넣지 않는다:
-                  자랑거리가 하나도 없는데 청구서만 있는 리포트를 보내지 않기 위함). */}
-              {report.unpaidTotal > 0 && (
-                <View style={styles.unpaidBlock}>
-                  <Text style={styles.unpaidTitle}>💌 미지급 용돈</Text>
-                  <Text style={styles.unpaidAmount}>{report.unpaidTotal.toLocaleString()}원</Text>
-                  <Text style={styles.unpaidCaption}>
-                    {report.unpaidCount}건이 부모님 확인을 기다리고 있습니다.
+              {/* 푸터 — 인증 도장과 미지급 알림을 한 줄로 눕혀 세로 길이를 아낀다.
+                  미지급은 자랑 지표가 아니라 부모님께 전하는 알림이라 톤을 구분한다
+                  (hasAnyBrag 판정에는 넣지 않는다: 자랑거리 없이 청구서만 있는 리포트 방지). */}
+              <View
+                style={[
+                  styles.footerRow,
+                  report.unpaidTotal > 0 ? styles.footerSplit : styles.footerCenter,
+                ]}
+              >
+                {report.unpaidTotal > 0 && (
+                  <Text style={styles.footerUnpaid}>
+                    💌 미지급 {report.unpaidTotal.toLocaleString()}원 · {report.unpaidCount}건
                   </Text>
-                </View>
-              )}
-
-              <Text style={styles.stamp}>🐯 호랑이 잉글리시가 인증합니다</Text>
+                )}
+                <Text style={styles.stamp}>🐯 호랑이 잉글리시 인증</Text>
+              </View>
             </View>
 
             <Pressable
@@ -449,26 +423,6 @@ function Rocket({
   return <Animated.Text style={[styles.rocket, { fontSize: size }, style]}>🚀</Animated.Text>;
 }
 
-/** 자랑 카드 내부 1블록 — 이모지+제목 헤더 + 내용. */
-function StatBlock({
-  emoji,
-  title,
-  children,
-}: {
-  emoji: string;
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <View style={styles.block}>
-      <Text style={styles.blockTitle}>
-        {emoji} {title}
-      </Text>
-      {children}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   flexFill: {
     flex: 1,
@@ -489,67 +443,86 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 24,
   },
+  // 포스터 카드 — 세로로 길어지면 카톡 말풍선에서 잘리므로 여백·간격을 촘촘히 잡는다.
   card: {
     backgroundColor: '#fff',
     borderRadius: 16,
     borderWidth: 1,
     borderColor: '#ffe0c2',
-    padding: 20,
-    gap: 20,
+    padding: 16,
+    gap: 12,
   },
   cardHeader: {
     alignItems: 'center',
   },
   cardHeaderTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '800',
     color: '#ff8a34',
   },
   cardHeaderPeriod: {
-    marginTop: 4,
-    fontSize: 12,
+    marginTop: 2,
+    fontSize: 11,
     color: '#999',
   },
-  block: {
+  hero: {
     backgroundColor: '#f7f7f7',
     borderRadius: 12,
-    padding: 16,
-    gap: 8,
+    padding: 12,
+    gap: 10,
   },
-  blockTitle: {
+  heroHead: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+  },
+  heroTitle: {
     fontSize: 14,
     fontWeight: '700',
     color: '#333',
   },
-  numberRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: 10,
-  },
-  bigNumber: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: '#222',
-  },
-  /** 큰 숫자 뒤에 붙는 "/28칸" 같은 보조 단위 — 숫자보다 작고 흐리게. */
-  numberSuffix: {
-    fontSize: 16,
-    fontWeight: '700',
+  heroCaption: {
+    fontSize: 11,
     color: '#888',
   },
   deltaUp: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
     color: '#2e7d32',
   },
-  conquerNumber: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: '#c0392b',
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
   },
-  blockCaption: {
-    fontSize: 13,
-    color: '#666',
+  // flexBasis 47% + flexGrow → 2열로 떨어지되, 홀수 개면 마지막 칸이 남은 폭을 채운다.
+  tile: {
+    flexBasis: '47%',
+    flexGrow: 1,
+    backgroundColor: '#f7f7f7',
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    gap: 3,
+  },
+  // 값을 키우되 굵기(800→700)와 명도를 낮추고 행간을 열어 답답함을 덜어낸다 —
+  // 크기로 강조하고 무게로는 누르지 않는다.
+  tileLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#8d8d8d',
+    lineHeight: 16,
+  },
+  tileValue: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#2f2f2f',
+    lineHeight: 27,
+  },
+  tileSub: {
+    fontSize: 11,
+    color: '#a3a3a3',
+    lineHeight: 15,
   },
   emptyBlock: {
     alignItems: 'center',
@@ -567,34 +540,26 @@ const styles = StyleSheet.create({
     color: '#999',
     textAlign: 'center',
   },
-  unpaidBlock: {
+  footerRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff8ee',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#ffd9a8',
-    borderStyle: 'dashed',
-    padding: 16,
-    gap: 4,
+    borderTopWidth: 1,
+    borderTopColor: '#f0e6d8',
+    paddingTop: 8,
   },
-  unpaidTitle: {
-    fontSize: 14,
+  footerSplit: {
+    justifyContent: 'space-between',
+  },
+  footerCenter: {
+    justifyContent: 'center',
+  },
+  footerUnpaid: {
+    fontSize: 11,
     fontWeight: '700',
     color: '#b45309',
   },
-  unpaidAmount: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: '#b45309',
-  },
-  unpaidCaption: {
-    fontSize: 12,
-    color: '#a1783c',
-    textAlign: 'center',
-  },
   stamp: {
-    textAlign: 'center',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     color: '#ff8a34',
   },
