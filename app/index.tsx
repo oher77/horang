@@ -1,14 +1,38 @@
 import { router, Stack, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, AppState, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  AppState,
+  Image,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+/**
+ * 홈 화면 — `design/호랑이잉글리시.png` 시안 절대좌표로 배치한다.
+ * 좌표와 배율 규칙은 `components/home/mockupLayout.ts` 참조.
+ */
+
+import GrassGauge from '../components/home/GrassGauge';
+import HomeMenuButtons from '../components/home/HomeMenuButtons';
+import { canvasHeight, MOCKUP, place, PLACE } from '../components/home/mockupLayout';
+import NotebookBackground, { PAPER_COLOR } from '../components/home/NotebookBackground';
+import TigerHero from '../components/home/TigerHero';
 import { epochDayToDateString, todayEpochDay } from '../lib/dates';
 import { currentSlotIndex, getCurrentStreak, getTodaySlots } from '../lib/habitQueries';
 import { ensureTodayDay, type DayWithWords } from '../lib/queries';
 
-const TOTAL_SLOTS = 4;
-
 export default function Index() {
+  const insets = useSafeAreaInsets();
+  const { width: screenWidth } = useWindowDimensions();
+  /** 시안 px → 화면 px 배율. 이 값 하나로 전체 레이아웃이 결정된다. */
+  const s = screenWidth / MOCKUP.width;
+
   const [today, setToday] = useState(() => epochDayToDateString(todayEpochDay()));
   const [day, setDay] = useState<DayWithWords | null>(null);
   const [loading, setLoading] = useState(true);
@@ -39,7 +63,7 @@ export default function Index() {
         setActiveSlot(active);
       })
       .catch(() => {
-        // 습관 배너는 부가 정보 — 조회 실패해도 메인 흐름(오늘 단어장)은 막지 않는다.
+        // 습관 게이지는 부가 정보 — 조회 실패해도 메인 흐름(오늘 단어장)은 막지 않는다.
       });
   }, []);
 
@@ -69,220 +93,86 @@ export default function Index() {
   }, [loadHabit, loadTodayDay]);
 
   return (
-    <ScrollView style={styles.scroll} contentContainerStyle={styles.container}>
-      <Stack.Screen options={{ title: 'horang english' }} />
-      <Text style={styles.title}>호랑이 잉글리시</Text>
-      <Text style={styles.date}>{today}</Text>
-
-      <HabitBanner slots={todaySlots} streak={streak} activeSlot={activeSlot} />
-
-      {loading && <ActivityIndicator style={styles.spacing} />}
-
-      {error && <Text style={styles.error}>{error}</Text>}
-
-      {!loading && !error && day && (
-        <View style={styles.spacing}>
-          <Text style={styles.dayLabel}>Day{day.day_index}</Text>
-          <Text style={styles.wordsCount}>단어 {day.words_count}개 준비됨</Text>
-
-          <Pressable
-            style={styles.button}
-            onPress={() =>
-              router.push({
-                pathname: '/day/[dayId]',
-                params: { dayId: String(day.id), dayIndex: String(day.day_index) },
-              })
-            }
+    <>
+      <Stack.Screen options={{ headerShown: false }} />
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+        <NotebookBackground>
+          <View
+            style={{
+              height: canvasHeight(s) + insets.top + insets.bottom,
+              paddingTop: insets.top,
+            }}
           >
-            <Text style={styles.buttonText}>오늘의 단어장 시작하기</Text>
-          </Pressable>
+            <Pressable style={place(PLACE.sun, s)} onPress={() => router.push('/settings')}>
+              <Image
+                source={require('../assets/images/btn-settings.png')}
+                style={styles.fill}
+                resizeMode="contain"
+              />
+            </Pressable>
 
-          <Pressable style={styles.secondaryButton} onPress={() => router.push('/review')}>
-            <Text style={styles.secondaryButtonText}>복습</Text>
-          </Pressable>
-
-          <Pressable style={styles.secondaryButton} onPress={() => router.push('/test')}>
-            <Text style={styles.secondaryButtonText}>테스트</Text>
-          </Pressable>
-
-          <Pressable style={styles.secondaryButton} onPress={() => router.push('/pronunciation')}>
-            <Text style={styles.secondaryButtonText}>발음 체크</Text>
-          </Pressable>
-
-          <Pressable style={styles.secondaryButton} onPress={() => router.push('/settings')}>
-            <Text style={styles.secondaryButtonText}>설정</Text>
-          </Pressable>
-
-          <Pressable style={styles.secondaryButton} onPress={() => router.push('/achievements')}>
-            <Text style={styles.secondaryButtonText}>내 자랑스런 업적</Text>
-          </Pressable>
-        </View>
-      )}
-    </ScrollView>
-  );
-}
-
-/**
- * 하루 4회 분산 인출 습관 배너 (설계.md §7.3).
- * - 4칸 게이지: 확정 ● / 미확정 ○, 현재 시각이 속한 슬롯은 강조 테두리.
- * - 스트릭 "🔥 N일 연속".
- * - 데드존(activeSlot null)이면 게이지 회색 처리 + 안내 문구.
- */
-function HabitBanner({
-  slots,
-  streak,
-  activeSlot,
-}: {
-  slots: boolean[] | null;
-  streak: number;
-  activeSlot: number | null;
-}) {
-  if (!slots) return null;
-
-  const isDeadZone = activeSlot === null;
-
-  return (
-    <View style={styles.habitBanner}>
-      <View style={styles.habitGauge}>
-        {Array.from({ length: TOTAL_SLOTS }, (_, i) => {
-          const filled = slots[i];
-          const isActive = activeSlot === i;
-          return (
-            <View
-              key={i}
-              style={[
-                styles.habitDot,
-                filled ? styles.habitDotFilled : styles.habitDotEmpty,
-                isDeadZone && styles.habitDotDeadZone,
-                isActive && styles.habitDotActive,
-              ]}
-            >
-              <Text style={[styles.habitDotText, isDeadZone && styles.habitDotTextDeadZone]}>
-                {filled ? '●' : '○'}
-              </Text>
+            {/* 잔디를 호랑이보다 **먼저** 그린다 — 시안에서 호랑이 발이 잔디를 덮는다. */}
+            <View style={place(PLACE.grass, s)}>
+              <GrassGauge slots={todaySlots} streak={streak} activeSlot={activeSlot} scale={s} />
             </View>
-          );
-        })}
-      </View>
 
-      <Text style={styles.habitStreak}>🔥 {streak}일 연속</Text>
+            {!loading && !error && day && (
+              <View style={place(PLACE.tiger, s)}>
+                <TigerHero
+                  dayIndex={day.day_index}
+                  wordsCount={day.words_count}
+                  dateLabel={today}
+                  onEnterWordbook={() =>
+                    router.push({
+                      pathname: '/day/[dayId]',
+                      params: { dayId: String(day.id), dayIndex: String(day.day_index) },
+                    })
+                  }
+                />
+              </View>
+            )}
 
-      {isDeadZone && <Text style={styles.habitDeadZoneHint}>곧 첫 슬롯이 열려요</Text>}
-    </View>
+            {loading && <ActivityIndicator style={[place(PLACE.tiger, s), styles.centered]} />}
+
+            {error && (
+              <Text style={[place(PLACE.tiger, s), styles.error]} numberOfLines={4}>
+                {error}
+              </Text>
+            )}
+
+            <HomeMenuButtons scale={s} />
+
+            <Image
+              source={require('../assets/images/deco-mountains.png')}
+              style={place(PLACE.mountains, s)}
+              resizeMode="contain"
+            />
+          </View>
+        </NotebookBackground>
+      </ScrollView>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
   scroll: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: PAPER_COLOR,
   },
-  container: {
-    backgroundColor: '#fff',
-    alignItems: 'center',
+  scrollContent: {
+    flexGrow: 1,
+  },
+  // 배치는 전부 place()가 만든 절대좌표다 — 여기에 padding/gap을 두지 않는다.
+  fill: {
+    width: '100%',
+    height: '100%',
+  },
+  centered: {
     justifyContent: 'center',
-    padding: 24,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '700',
-  },
-  date: {
-    fontSize: 14,
-    color: '#888',
-    marginTop: 4,
-  },
-  spacing: {
-    marginTop: 32,
-    alignItems: 'center',
-  },
-  dayLabel: {
-    fontSize: 20,
-    fontWeight: '600',
-  },
-  wordsCount: {
-    fontSize: 14,
-    color: '#666',
-    marginTop: 4,
-  },
-  button: {
-    marginTop: 20,
-    backgroundColor: '#ff8a34',
-    paddingHorizontal: 24,
-    paddingVertical: 14,
-    borderRadius: 12,
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  secondaryButton: {
-    marginTop: 12,
-    borderWidth: 1,
-    borderColor: '#ff8a34',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 12,
-    minWidth: 200,
-    alignItems: 'center',
-  },
-  secondaryButtonText: {
-    color: '#ff8a34',
-    fontSize: 15,
-    fontWeight: '600',
   },
   error: {
-    marginTop: 24,
     color: '#c0392b',
     textAlign: 'center',
-  },
-  habitBanner: {
-    marginTop: 16,
-    alignItems: 'center',
-  },
-  habitGauge: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  habitDot: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'transparent',
-  },
-  habitDotFilled: {
-    backgroundColor: '#fff1e6',
-  },
-  habitDotEmpty: {
-    backgroundColor: '#f2f2f2',
-  },
-  habitDotDeadZone: {
-    backgroundColor: '#eee',
-  },
-  habitDotActive: {
-    borderColor: '#ff8a34',
-  },
-  habitDotText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#ff8a34',
-  },
-  habitDotTextDeadZone: {
-    color: '#bbb',
-  },
-  habitStreak: {
-    marginTop: 6,
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#666',
-  },
-  habitDeadZoneHint: {
-    marginTop: 4,
-    fontSize: 12,
-    color: '#999',
+    textAlignVertical: 'center',
   },
 });

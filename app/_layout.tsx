@@ -1,9 +1,11 @@
+import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, AppState, StyleSheet, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { initDatabases } from '../lib/db';
+import { FONT_ASSETS } from '../lib/fonts';
 import { rescheduleSlotNotifications } from '../lib/notifications';
 import { loadSettings } from '../lib/settings';
 
@@ -12,6 +14,9 @@ type InitState = 'loading' | 'ready' | 'error';
 export default function RootLayout() {
   const [state, setState] = useState<InitState>('loading');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // 손글씨 폰트는 기존 초기화 게이트와 함께 기다린다 — 따로 기다리면 기본 폰트로
+  // 한 프레임 그려졌다가 바뀌면서 글자가 깜빡인다 (가이드 §5).
+  const [fontsLoaded, fontError] = useFonts(FONT_ASSETS);
 
   useEffect(() => {
     let cancelled = false;
@@ -47,7 +52,8 @@ export default function RootLayout() {
     return () => subscription.remove();
   }, [state]);
 
-  if (state === 'loading') {
+  // 폰트 로딩 실패는 앱을 막지 않는다 — 시스템 기본 글꼴로 떨어질 뿐이다.
+  if (state === 'loading' || (!fontsLoaded && !fontError)) {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" />

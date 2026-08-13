@@ -1,0 +1,127 @@
+import { Image, StyleSheet, Text, View } from 'react-native';
+
+import { HANDWRITING_FONT } from '../../lib/fonts';
+
+/**
+ * 잔디 게이지 (design/홈화면-에셋-가이드.md §1).
+ *
+ * ── 3층 스택, 좌우 이동 한 번 말고는 좌표 계산이 없다 ──────────────────────
+ *
+ *   grass-box.png (928 × 619)   배경 + 꺼진 전구 4개(반투명 검정 워시)
+ *     ├ bulb-glow.png × 완료 슬롯   272 × 619 — **세로는 전체 높이라 x만 옮긴다**
+ *     ├ bulbs.png (928 × 619)       전구 윤곽선 4개. **(0,0)에 겹치기만**
+ *     ├ 빨간 점 (코드)               현재 열린 슬롯 위
+ *     └ 🔥 N일 연속 (코드)           전구 아래
+ *
+ * 2026-08-11 에셋 재작업으로 `bulbs.png`가 grass-box와 같은 928 × 619 캔버스가 되고
+ * 윤곽선이 워시 전구와 맞춰졌으며(중심 205.5/377/544/717 vs 워시 205.5/377/542/715),
+ * `bulb-glow.png`는 높이가 619로 늘어나 **y 보정이 필요 없어졌다.**
+ * 호랑이(body/face/eye-shut)와 같은 "같은 캔버스에 겹치기" 방식이다.
+ *
+ * 슬롯 판정 로직은 만들지 않는다 — 부모(app/index.tsx)가 준 값을 그리기만 한다.
+ */
+
+const TOTAL_SLOTS = 4;
+
+// ── grass-box.png(928 × 619) 내부 실측 좌표 ──────────────────────────────
+/** bulbs.png 윤곽선 4개의 중심 x. 손그림이라 간격이 균등하지 않다. */
+const BULB_CENTERS_X = [205.5, 377, 544, 717];
+
+/** bulb-glow.png 규격: 272 × 619, 빛의 코어 중심이 x = 135. */
+const GLOW_WIDTH = 272;
+const GLOW_HEIGHT = 619;
+const GLOW_CORE_CX = 135;
+
+/** 빨간 점 — 윤곽선 상단(y 246)보다 위. */
+const DOT_Y = 205;
+const DOT_SIZE = 26;
+
+/** "🔥 N일 연속" — 시안 실측(전구 아래, grass-box 좌표 y 472~552). 실기기 미세조정 대상. */
+const STREAK_TOP = 455;
+const STREAK_FONT_SIZE = 105;
+
+export default function GrassGauge({
+  slots,
+  streak,
+  activeSlot,
+  scale,
+}: {
+  slots: boolean[] | null;
+  streak: number;
+  activeSlot: number | null;
+  /** 시안 px → 화면 px 배율. grass-box도 시안에서 1:1로 잘렸으므로 같은 배율이 그대로 통한다. */
+  scale: number;
+}) {
+  return (
+    <View style={styles.wrap}>
+      <Image
+        source={require('../../assets/images/grass-box.png')}
+        style={StyleSheet.absoluteFill}
+        resizeMode="contain"
+      />
+
+      {/* 켜진 전구 — 세로는 전체 높이 그대로, 좌우로만 옮긴다. */}
+      {slots?.map((filled, i) =>
+        filled && i < TOTAL_SLOTS ? (
+          <Image
+            key={i}
+            source={require('../../assets/images/bulb-glow.png')}
+            style={{
+              position: 'absolute',
+              left: (BULB_CENTERS_X[i] - GLOW_CORE_CX) * scale,
+              top: 0,
+              width: GLOW_WIDTH * scale,
+              height: GLOW_HEIGHT * scale,
+            }}
+            resizeMode="contain"
+          />
+        ) : null,
+      )}
+
+      {/* 윤곽선은 빛 위에 얹어야 켜진 전구도 테두리가 살아난다. */}
+      <Image
+        source={require('../../assets/images/bulbs.png')}
+        style={StyleSheet.absoluteFill}
+        resizeMode="contain"
+      />
+
+      {activeSlot !== null && activeSlot < TOTAL_SLOTS && (
+        <View
+          style={[
+            styles.activeDot,
+            {
+              left: (BULB_CENTERS_X[activeSlot] - DOT_SIZE / 2) * scale,
+              top: DOT_Y * scale,
+              width: DOT_SIZE * scale,
+              height: DOT_SIZE * scale,
+              borderRadius: (DOT_SIZE * scale) / 2,
+            },
+          ]}
+        />
+      )}
+
+      <Text style={[styles.streakText, { top: STREAK_TOP * scale, fontSize: STREAK_FONT_SIZE * scale }]}>
+        🔥 {streak}일 연속
+      </Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  wrap: {
+    width: '100%',
+    height: '100%',
+  },
+  activeDot: {
+    position: 'absolute',
+    backgroundColor: '#e02020',
+  },
+  streakText: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    textAlign: 'center',
+    fontFamily: HANDWRITING_FONT,
+    color: '#1b1b1b',
+  },
+});
