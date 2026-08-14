@@ -1,6 +1,6 @@
 import { Image, StyleSheet, Text, View } from 'react-native';
 
-import { HANDWRITING_FONT } from '../../lib/fonts';
+import { HANDWRITING_FONT, handwritingLineHeight, handwritingTop } from '../../lib/fonts';
 
 /**
  * 잔디 게이지 (design/홈화면-에셋-가이드.md §1).
@@ -40,14 +40,23 @@ const GLOW_CORE_CX = 135;
 const DOT_Y = 205;
 const DOT_SIZE = 26;
 
-/** "🔥 N일 연속" — 시안 실측(전구 아래, grass-box 좌표 y 472~552). 실기기 미세조정 대상. */
-const STREAK_TOP = 455;
-/*
- * 글자 크기 비율(2026-08-14 사용자 지정): "N일 연속" = 52.
- * 버튼 라벨 "복습"(150, 비율 90) 기준 환산. 잔디 좌표계(928)와 버튼 좌표계(866)는
- * 다르지만 화면에 그려질 때 둘 다 같은 배율 `scale`이 곱해지므로 비율이 그대로 반영된다.
+/**
+ * "🔥 N일 연속" — **이모지와 글자를 한 `<Text>`에 넣지 않는다** (2026-08-14).
+ *
+ * 이모지는 이 폰트에 없어서 Apple Color Emoji로 대체되는데, 그 폰트의 ascent가 훨씬 커서
+ * 줄 전체를 밀어내린다. 실측으로 이 줄만 다른 텍스트보다 0.27em 더 밀렸다
+ * (글자 0.62em vs 이 줄 0.885em). 둘을 갈라 각자 배치하면 글자가 폰트 지표대로 앉는다.
+ *
+ * 아래 값은 전부 **시안에서 잰 잉크 중심**(grass-box 좌표). 폰트 보정은 `handwritingTop()`이 한다.
  */
-const STREAK_FONT_SIZE = 87;
+// fontSize 87 = 사용자 지정 비율("N일 연속" 52, 복습 150/비율 90 기준 환산).
+const STREAK_TEXT = { centerX: 496, centerY: 512, fontSize: 87 };
+/**
+ * 불꽃 — 시안 실측 x 287~372 / y 448~557 (86 × 110).
+ * 이모지는 폰트 지표를 믿을 수 없어 박스 중앙 정렬만 하고, 어긋난 만큼 실기기 측정으로 뺀다.
+ * 2026-08-14 측정: x·크기는 정확히 맞았고(중심 325/폭 90) **세로만 22px 낮아** centerY를 502 → 480.
+ */
+const FIRE = { centerX: 329, centerY: 480, fontSize: 95 };
 
 export default function GrassGauge({
   slots,
@@ -75,7 +84,13 @@ export default function GrassGauge({
   };
 
   return (
-    <View style={{ width: boxWidth, height: boxHeight, overflow: 'hidden' }}>
+    // pointerEvents="none" — 잔디는 호랑이 **위**에 그려지므로(app/index.tsx 렌더 순서),
+    // 이게 없으면 겹치는 구간(말풍선 탭 영역 아래 16px)의 터치를 잔디가 가로챈다.
+    // 잔디는 보여주기만 하는 레이어라 터치를 받을 이유가 없다.
+    <View
+      style={{ width: boxWidth, height: boxHeight, overflow: 'hidden' }}
+      pointerEvents="none"
+    >
       <Image
         source={require('../../assets/images/grass-box.png')}
         style={layerStyle}
@@ -122,8 +137,36 @@ export default function GrassGauge({
         />
       )}
 
-      <Text style={[styles.streakText, { top: STREAK_TOP * scale, fontSize: STREAK_FONT_SIZE * scale }]}>
-        🔥 {streak}일 연속
+      {/* 불꽃 — 이모지 전용 박스. 폰트 지표를 못 믿으므로 박스 안에서 중앙 정렬만 한다. */}
+      <Text
+        style={[
+          styles.fire,
+          {
+            left: (FIRE.centerX - FIRE.fontSize) * scale,
+            top: (FIRE.centerY - FIRE.fontSize) * scale,
+            width: FIRE.fontSize * 2 * scale,
+            height: FIRE.fontSize * 2 * scale,
+            lineHeight: FIRE.fontSize * 2 * scale,
+            fontSize: FIRE.fontSize * scale,
+          },
+        ]}
+      >
+        🔥
+      </Text>
+
+      <Text
+        style={[
+          styles.streakText,
+          {
+            top: handwritingTop(STREAK_TEXT.centerY, STREAK_TEXT.fontSize) * scale,
+            fontSize: STREAK_TEXT.fontSize * scale,
+            lineHeight: handwritingLineHeight(STREAK_TEXT.fontSize) * scale,
+            // 좌우 0 + textAlign center 기준으로, 글자 중심을 잔디 박스 중심에서 옮긴다.
+            marginLeft: (STREAK_TEXT.centerX - BOX_WIDTH / 2) * scale,
+          },
+        ]}
+      >
+        {streak}일 연속
       </Text>
     </View>
   );
@@ -141,5 +184,9 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontFamily: HANDWRITING_FONT,
     color: '#1b1b1b',
+  },
+  fire: {
+    position: 'absolute',
+    textAlign: 'center',
   },
 });

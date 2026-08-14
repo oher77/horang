@@ -2,7 +2,7 @@ import { router, type Href } from 'expo-router';
 import { Fragment } from 'react';
 import { Image, Pressable, StyleSheet, Text } from 'react-native';
 
-import { HANDWRITING_FONT } from '../../lib/fonts';
+import { HANDWRITING_FONT, handwritingLineHeight, handwritingTop } from '../../lib/fonts';
 import { place, PLACE, type Placement } from './mockupLayout';
 
 /**
@@ -25,14 +25,22 @@ interface MenuItem {
   source: number;
   at: Placement;
   route: Href;
-  /** 라벨이 없는 항목(꽃·리본)은 undefined. */
+  /**
+   * 라벨이 없는 항목(꽃·리본)은 undefined.
+   *
+   * 좌표는 전부 **버튼 로컬 px(= 시안 px)의 정수**다. 비율(0~1)로 두면 소수점이 생기고
+   * 버튼마다 폭·높이가 달라 값을 눈으로 비교할 수 없다.
+   */
   label?: {
     text: string;
-    /** 버튼 로컬 px (= 시안 px). 손글씨 실측값이라 버튼마다 다르다. */
     fontSize: number;
-    /** 버튼 폭 대비 글자 중심 (0~1). */
+    /** 시안에서 잰 글자 잉크의 중심 x. */
     centerX: number;
-    /** 버튼 높이 대비 글자 중심 (0~1). */
+    /**
+     * 시안에서 잰 글자 잉크의 중심 y.
+     * 폰트 지표 보정은 `lib/fonts.ts`의 `handwritingTop()`이 처리하므로
+     * **여기에 보정값을 섞지 말 것.** 폰트를 바꿔도 이 값은 그대로 둔다.
+     */
     centerY: number;
   };
 }
@@ -43,7 +51,7 @@ const ITEMS: MenuItem[] = [
     source: require('../../assets/images/btn-review.png'),
     at: PLACE.review,
     route: '/review',
-    label: { text: '복습', fontSize: 150, centerX: 0.491, centerY: 0.482 },
+    label: { text: '복습', fontSize: 150, centerX: 425, centerY: 119 },
     // 글자 크기 비율(2026-08-14 사용자 지정): 복습 : 발음체크 : 테스트 = 90 : 80 : 100.
     // 복습 150을 기준(=90)으로 환산 → 발음체크 133, 테스트 167.
   },
@@ -53,7 +61,7 @@ const ITEMS: MenuItem[] = [
     at: PLACE.pronunciation,
     route: '/pronunciation',
     // 오른쪽에 개구리가 있어 글자가 왼쪽으로 치우쳐 있다.
-    label: { text: '발음체크', fontSize: 133, centerX: 0.385, centerY: 0.554 },
+    label: { text: '발음체크', fontSize: 133, centerX: 334, centerY: 137 },
   },
   {
     key: 'test',
@@ -61,7 +69,7 @@ const ITEMS: MenuItem[] = [
     at: PLACE.test,
     route: '/test',
     // 오른쪽에 호랑이가 있어 글자가 왼쪽으로 치우쳐 있다.
-    label: { text: '테스트', fontSize: 167, centerX: 0.395, centerY: 0.536 },
+    label: { text: '테스트', fontSize: 167, centerX: 346, centerY: 133 },
   },
   {
     key: 'achievements',
@@ -94,11 +102,10 @@ export default function HomeMenuButtons({ scale }: { scale: number }) {
                 styles.label,
                 {
                   fontSize: item.label.fontSize * scale,
-                  // lineHeight를 fontSize와 같게 고정해야 top 계산이 예측 가능해진다.
-                  lineHeight: item.label.fontSize * scale,
-                  top: (item.at.h * item.label.centerY - item.label.fontSize / 2) * scale,
+                  lineHeight: handwritingLineHeight(item.label.fontSize) * scale,
+                  top: handwritingTop(item.label.centerY, item.label.fontSize) * scale,
                   // 글자 중심을 버튼 중심에서 얼마나 옮길지 (좌우 0 + textAlign center 기준).
-                  marginLeft: item.at.w * (item.label.centerX - 0.5) * scale,
+                  marginLeft: (item.label.centerX - item.at.w / 2) * scale,
                 },
               ]}
             >

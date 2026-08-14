@@ -16,7 +16,7 @@ import Animated, {
 
 import * as Haptics from 'expo-haptics';
 
-import { HANDWRITING_FONT } from '../../lib/fonts';
+import { HANDWRITING_FONT, handwritingLineHeight, handwritingTop } from '../../lib/fonts';
 import { playTigerSound, type TigerSound } from '../../lib/tigerSounds';
 import { useTigerGestures, type TigerEvent } from './useTigerGestures';
 
@@ -112,10 +112,17 @@ const BUBBLE_AREA = {
  * 버튼 좌표계(866)는 다르지만 화면에 그려질 때 둘 다 같은 배율 `s`가 곱해지므로
  * 비율이 그대로 반영된다. `GrassGauge.STREAK_FONT_SIZE`도 같은 기준.
  */
+/*
+ * centerY = **시안에서 잰 글자 잉크의 세로 중심** (말풍선 로컬 y — 말풍선은 히어로 y 384에서 시작).
+ * 시안 실측 히어로 좌표 495 / 665 / 812 에서 384를 뺀 값이다.
+ *
+ * 폰트 지표 보정은 `lib/fonts.ts`의 `handwritingTop()`이 처리한다 —
+ * 여기에는 보정값을 섞지 말 것. 폰트를 바꿔도 이 값은 그대로 둔다.
+ */
 const BUBBLE_LINES = {
-  date: { centerY: 498 - 384, fontSize: 87 },
-  day: { centerY: 668 - 384, fontSize: 233 },
-  words: { centerY: 819 - 384, fontSize: 87 },
+  date: { centerY: 111, fontSize: 87 },
+  day: { centerY: 281, fontSize: 233 },
+  words: { centerY: 428, fontSize: 87 },
 } as const;
 
 const WEEKDAY_LABELS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -184,7 +191,8 @@ const PULL_MAX_DESIGN_PX = 60; // 튜닝 대상 — 목 연장분과 맞물림
 const PULL_ARM_DESIGN_PX = 40; // 튜닝 대상
 const HEADPOP_RISE_MS = 180;
 const HEADPOP_HOLD_MS = 150;
-const HEADPOP_RETURN_MS = 300;
+/** 낙하 시간. 튕김 복귀는 스프링이 아니라 중력 낙하다(출렁임 없음) — 느리면 이 값을 줄인다. */
+const HEADPOP_RETURN_MS = 220; // 튜닝 대상
 /**
  * 머리가 튀어오르는 최고 지점 — 중립보다 이만큼 위(디자인 px).
  * 2026-08-14: 60 → 90 (사용자 지정, 더 확실한 분리). 머리 밑선이 281이므로 90px 상승 시
@@ -220,8 +228,13 @@ function randomBlinkIntervalMs() {
 
 // ── 평상시 숨쉬기 (§2-4 "평상시") ─────────────────────────────────────
 // 머리 컨테이너가 아니라 히어로 전체(바깥 breathContainer)에 건다.
-const BREATH_AMPLITUDE_DESIGN_PX = 4; // 튜닝 대상
-const BREATH_PERIOD_MS = 3000; // 튜닝 대상 — 3초 주기(위 1.5s + 아래 1.5s)
+/**
+ * 제자리에서 **위로** 올라가는 최대치(디자인 px). 들숨에 올라가고 날숨에 제자리로 온다.
+ * 2026-08-14: 4 → 8. 예전 구현은 `+amp ↔ −amp`를 왕복해 실제 이동량이 상수의 2배였으므로,
+ * 8로 두면 눈에 보이는 이동량이 그대로 유지된다.
+ */
+const BREATH_AMPLITUDE_DESIGN_PX = 8; // 튜닝 대상
+const BREATH_PERIOD_MS = 3000; // 튜닝 대상 — 3초 주기(올라가기 1.5s + 내려오기 1.5s)
 
 export default function TigerHero({
   dayIndex,
@@ -397,9 +410,12 @@ export default function TigerHero({
             duration: HEADPOP_RISE_MS,
             easing: Easing.out(Easing.cubic),
           }),
+          // 복귀는 스프링이 아니라 **떨어지는 모션**이다 — 2026-08-14 실기기 확인 후 변경.
+          // 예전엔 withSpring(overshootClamping:false)이라 착지 후 출렁거렸다.
+          // Easing.in(cubic) = 천천히 시작해 가속 = 중력 낙하. 오버슈트가 없어 턱 붙는다.
           withDelay(
             HEADPOP_HOLD_MS,
-            withSpring(0, { damping: 10, stiffness: 150, overshootClamping: false }),
+            withTiming(0, { duration: HEADPOP_RETURN_MS, easing: Easing.in(Easing.cubic) }),
           ),
         );
         break;
@@ -517,19 +533,19 @@ export default function TigerHero({
     useCallback(() => {
       if (renderedWidth > 0) {
         const amplitude = designPxToReal(BREATH_AMPLITUDE_DESIGN_PX);
+        // ★ 한 방향(위로)만 정의하고 되돌아오기는 reverse:true에 맡긴다.
+        //   `withSequence(+amp, −amp)` + `reverse:false`로 짜면 시퀀스가 시작점(0)으로
+        //   돌아오지 않은 채 끝나고, 반복이 다음 회차를 시작할 때 값이 0으로 즉시 리셋되어
+        //   "올라갔다가 제자리로 툭" 떨어지는 이음새가 보인다 (2026-08-14 실기기에서 발생).
+        //   reverse:true는 같은 애니메이션을 역재생하므로 시작점으로 정확히 돌아온다 —
+        //   리셋할 지점 자체가 없어 이음새가 구조적으로 생기지 않는다.
         breathTranslateY.value = withRepeat(
-          withSequence(
-            withTiming(amplitude, {
-              duration: BREATH_PERIOD_MS / 2,
-              easing: Easing.inOut(Easing.sin),
-            }),
-            withTiming(-amplitude, {
-              duration: BREATH_PERIOD_MS / 2,
-              easing: Easing.inOut(Easing.sin),
-            }),
-          ),
+          withTiming(-amplitude, {
+            duration: BREATH_PERIOD_MS / 2,
+            easing: Easing.inOut(Easing.sin),
+          }),
           -1,
-          false,
+          true,
         );
       }
       return () => {
@@ -620,9 +636,8 @@ export default function TigerHero({
                 styles.bubbleLine,
                 {
                   fontSize: designPxToReal(line.fontSize),
-                  // lineHeight를 fontSize와 같게 고정해야 top 계산이 예측 가능해진다.
-                  lineHeight: designPxToReal(line.fontSize),
-                  top: designPxToReal(line.centerY - line.fontSize / 2),
+                  lineHeight: designPxToReal(handwritingLineHeight(line.fontSize)),
+                  top: designPxToReal(handwritingTop(line.centerY, line.fontSize)),
                 },
               ]}
             >

@@ -5,12 +5,18 @@ import {
   AppState,
   Image,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   useWindowDimensions,
   View,
 } from 'react-native';
+// ★ ScrollView는 반드시 gesture-handler 것을 쓴다 (react-native 것 아님).
+// `blocksExternalGesture()`는 gesture-handler가 아는 핸들러만 차단할 수 있는데,
+// RN 기본 ScrollView는 등록돼 있지 않아 차단 관계가 조용히 무시된다. 그러면 머리
+// "아래로 당기기" Pan과 UIScrollView의 내장 pan이 네이티브에서 그냥 경쟁해서,
+// 같은 동작인데도 어떨 땐 스크롤이 되고 어떨 땐 당기기가 되는 현상이 생긴다
+// (2026-08-14 실기기에서 발생).
+import { ScrollView } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 /**
@@ -117,11 +123,6 @@ export default function Index() {
               />
             </Pressable>
 
-            {/* 잔디를 호랑이보다 **먼저** 그린다 — 시안에서 호랑이 발이 잔디를 덮는다. */}
-            <View style={place(PLACE.grass, s)}>
-              <GrassGauge slots={todaySlots} streak={streak} activeSlot={activeSlot} scale={s} />
-            </View>
-
             {!loading && !error && day && (
               <View style={place(PLACE.tiger, s)}>
                 <TigerHero
@@ -146,6 +147,18 @@ export default function Index() {
                 {error}
               </Text>
             )}
+
+            {/*
+              잔디를 호랑이보다 **나중에** 그린다 — 시안에서 잔디가 호랑이 발을 덮는다.
+              (2026-08-14 정정. 그 전엔 반대로 알고 순서가 뒤바뀌어 있었다.)
+              잔디 위쪽은 풀잎 끝이라 거의 투명해서, 순서만 바꿔도 발이 풀 사이로 비치는
+              시안 모습이 그대로 재현된다 — 별도 마스킹 불필요.
+              말풍선 탭 영역 아래 16px과 겹치지만 GrassGauge가 pointerEvents="none"이라
+              터치는 그대로 통과한다.
+            */}
+            <View style={place(PLACE.grass, s)}>
+              <GrassGauge slots={todaySlots} streak={streak} activeSlot={activeSlot} scale={s} />
+            </View>
 
             <HomeMenuButtons scale={s} />
 
