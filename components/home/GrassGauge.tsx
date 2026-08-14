@@ -23,6 +23,10 @@ import { HANDWRITING_FONT } from '../../lib/fonts';
 
 const TOTAL_SLOTS = 4;
 
+/** grass-box.png / bulbs.png 캔버스. 모든 내부 좌표의 기준이다. */
+const BOX_WIDTH = 928;
+const BOX_HEIGHT = 619;
+
 // ── grass-box.png(928 × 619) 내부 실측 좌표 ──────────────────────────────
 /** bulbs.png 윤곽선 4개의 중심 x. 손그림이라 간격이 균등하지 않다. */
 const BULB_CENTERS_X = [205.5, 377, 544, 717];
@@ -52,11 +56,24 @@ export default function GrassGauge({
   /** 시안 px → 화면 px 배율. grass-box도 시안에서 1:1로 잘렸으므로 같은 배율이 그대로 통한다. */
   scale: number;
 }) {
+  // ★ 부모 크기에 의존하지 않는다. `%`·`StyleSheet.absoluteFill`로 부모 높이에 기대면
+  //   부모 높이가 안 잡히는 순간 이미지가 원본 크기로 흘러넘친다(2026-08-13 실기기에서 발생 —
+  //   잔디와 전구가 3배로 커져 화면을 덮었다). 전부 scale로 직접 px를 계산한다.
+  const boxWidth = BOX_WIDTH * scale;
+  const boxHeight = BOX_HEIGHT * scale;
+  const layerStyle = {
+    position: 'absolute' as const,
+    left: 0,
+    top: 0,
+    width: boxWidth,
+    height: boxHeight,
+  };
+
   return (
-    <View style={styles.wrap}>
+    <View style={{ width: boxWidth, height: boxHeight, overflow: 'hidden' }}>
       <Image
         source={require('../../assets/images/grass-box.png')}
-        style={StyleSheet.absoluteFill}
+        style={layerStyle}
         resizeMode="contain"
       />
 
@@ -81,7 +98,7 @@ export default function GrassGauge({
       {/* 윤곽선은 빛 위에 얹어야 켜진 전구도 테두리가 살아난다. */}
       <Image
         source={require('../../assets/images/bulbs.png')}
-        style={StyleSheet.absoluteFill}
+        style={layerStyle}
         resizeMode="contain"
       />
 
@@ -108,10 +125,6 @@ export default function GrassGauge({
 }
 
 const styles = StyleSheet.create({
-  wrap: {
-    width: '100%',
-    height: '100%',
-  },
   activeDot: {
     position: 'absolute',
     backgroundColor: '#e02020',
