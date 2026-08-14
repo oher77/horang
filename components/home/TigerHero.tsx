@@ -14,6 +14,8 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
+import * as Haptics from 'expo-haptics';
+
 import { HANDWRITING_FONT } from '../../lib/fonts';
 import { playTigerSound, type TigerSound } from '../../lib/tigerSounds';
 import { useTigerGestures, type TigerEvent } from './useTigerGestures';
@@ -46,6 +48,14 @@ import { useTigerGestures, type TigerEvent } from './useTigerGestures';
  * `breathContainer`에서 처리해 서로 겹치지 않는다. 머리만 움직이는 이벤트
  * (headPop 등)는 안쪽 머리 컨테이너 transform이라 숨쉬기 위에 그대로 얹힌다.
  * 터치 영역은 이 숨쉬기 컨테이너 밖(§2)에 그대로 있다.
+ *
+ * ── 머리 제스처 4종 (2026-08-14 재설계) ────────────────────────────────
+ * 탭 1회는 더 이상 고정된 "움찔"이 아니라, 아래 4개 효과(TigerEffect) 중 랜덤으로
+ * 하나를 고른다(직전 것 제외) — 제스처를 모르는 아이도 탭만으로 모든 연출을 발견하게
+ * 하기 위해서다. 탭 3연타는 폐기했다(랜덤 탭과 판정이 충돌). 길게 누르기도 폐기하고
+ * **아래로 당겼다 놓기**로 교체했다 — 머리 영역에서는 세로 스크롤을 포기해도 된다는
+ * 결정 덕분에, 예전에 당기기를 막았던 ScrollView 충돌 문제가 사라졌다. 자세한 판정
+ * 로직은 `useTigerGestures.ts`, 표는 `design/홈화면-에셋-가이드.md` §2-4·§2-8.
  */
 export interface TigerHeroProps {
   /** 말풍선 안에 얹을 값 — 이미지에 넣지 않고 폰트로 렌더한다 (§2). */
@@ -54,6 +64,11 @@ export interface TigerHeroProps {
   dateLabel: string;
   /** 말풍선 탭 → 오늘의 단어장 진입. */
   onEnterWordbook: () => void;
+  /**
+   * 홈 화면 ScrollView의 ref — 머리를 아래로 당기는 제스처가 세로 스크롤을 이기게
+   * 하려면 필요하다 (useTigerGestures의 blocksExternalGesture, §2-8 ①).
+   */
+  scrollRef: React.RefObject<unknown>;
 }
 
 // ── 히어로 캔버스 기준 상수 ──────────────────────────────────────────────
@@ -91,10 +106,16 @@ const BUBBLE_AREA = {
  * `fontSize`는 손글씨 글자높이(98 / 145 / 64)에서 추정한 값이다 — 폰트가 바뀌면
  * 체감 크기가 달라지므로 **실기기 튜닝 대상**.
  */
+/*
+ * 글자 크기 비율(2026-08-14 사용자 지정): 날짜 : DAY N : 단어 수 = 52 : 140 : 52.
+ * 버튼 라벨 "복습"(150, 비율 90)을 기준으로 환산한 값이다 — 히어로 좌표계(1060)와
+ * 버튼 좌표계(866)는 다르지만 화면에 그려질 때 둘 다 같은 배율 `s`가 곱해지므로
+ * 비율이 그대로 반영된다. `GrassGauge.STREAK_FONT_SIZE`도 같은 기준.
+ */
 const BUBBLE_LINES = {
-  date: { centerY: 498 - 384, fontSize: 92 },
-  day: { centerY: 668 - 384, fontSize: 160 },
-  words: { centerY: 819 - 384, fontSize: 72 },
+  date: { centerY: 498 - 384, fontSize: 87 },
+  day: { centerY: 668 - 384, fontSize: 233 },
+  words: { centerY: 819 - 384, fontSize: 87 },
 } as const;
 
 const WEEKDAY_LABELS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -111,53 +132,80 @@ function formatBubbleDate(iso: string): string {
 // 전부 "히어로 캔버스 1060px 폭 기준" 디자인 px다. 실제 렌더 폭에 맞춰
 // designPxToReal()로 환산해서 쓴다. **실기기 튜닝 대상은 각 상수 옆에 표시.**
 
-// 이벤트 3(탭 1회, tap): scale 1.03 움찔, 0.2s
+// ── 탭 1회(tap) 랜덤 효과 4종 (2026-08-14) ──────────────────────────────
+// 탭이 오면 아래 네 시퀀스 중 하나를 랜덤으로 고른다(직전 것 제외, handleTigerEvent
+// 'tap' 케이스). 연출 자체는 기존 tripleTap/pet/petLong 코드를 그대로 재사용한다.
+
+// 효과: 움찔(nudge) — scale 1.03, 사운드는 4개 중 랜덤(직전 소리 제외)
 const TAP_SCALE = 1.03; // 튜닝 대상
 const TAP_TOTAL_MS = 200;
 
-// 이벤트 4(탭 3연타, tripleTap): rotate ±10°, 250 → 500 유지 → 250
-const TRIPLE_TAP_ROTATE_DEG = 10; // 튜닝 대상
-const TRIPLE_TAP_IN_MS = 250;
-const TRIPLE_TAP_HOLD_MS = 500;
-const TRIPLE_TAP_OUT_MS = 250;
+// 효과: 갸우뚱(tilt) — rotate ±10°, huh.m4a 고정. 250 → 500 유지 → 250
+const TILT_ROTATE_DEG = 10; // 튜닝 대상
+const TILT_IN_MS = 250;
+const TILT_HOLD_MS = 500;
+const TILT_OUT_MS = 250;
 
-// 이벤트 2(쓰다듬기, pet): translateY +18px, 400ms 하강 후 유지
+// 효과: 머리 내려감(headDown) — purr.m4a 고정, translateY +18px. 좌우 쓰다듬기(pet)와
+// 달리 손을 떼지 않아도 스스로 내려갔다 돌아오는 고정 시퀀스라 별도 타이밍을 둔다.
+const TAP_HEADDOWN_DOWN_MS = 300;
+const TAP_HEADDOWN_HOLD_MS = 300;
+const TAP_HEADDOWN_RETURN_MS = 300;
+
+// 이벤트 2(쓰다듬기, pet — 손 떼기 전까지 유지): translateY +18px, 400ms 하강 후 유지
 const PET_DOWN_DESIGN_PX = 18; // 튜닝 대상
 const PET_DOWN_MS = 400;
 const PET_RETURN_MS = 400; // 손 뗀 뒤 복귀
 
-// 이벤트 1(petLong — 하품, 얼굴/발톱 없이 모션만): §2-7 타임라인의 머리 모션 구간만.
-// "0ms 머리 뒤로 젖히기(rotate −6°, translateY −8px, 300ms)" → "600ms 유지"
-// → "880ms 머리 복귀(300ms)". 총 1200ms(+ 스펙상 1.4s는 얼굴 교체 여운 포함,
-// 여기선 얼굴 교체가 없으므로 1200ms로 busy를 잡는다).
+// 이벤트 1(petLong — 하품, 얼굴/발톱 없이 모션만) / 효과: 하품(yawn, 탭 랜덤 풀 항목).
+// §2-7 타임라인의 머리 모션 구간만. "0ms 머리 뒤로 젖히기(rotate −6°, translateY −8px,
+// 300ms)" → "600ms 유지" → "880ms 머리 복귀(300ms)". 총 1200ms(+ 스펙상 1.4s는 얼굴
+// 교체 여운 포함, 여기선 얼굴 교체가 없으므로 1200ms로 busy를 잡는다). 손으로 계속
+// 쓰다듬어 도달한 경우(petLong)와 탭 랜덤으로 뽑힌 경우(yawn) 모두 playYawnSequence()
+// 하나를 공유한다 — 어느 쪽이든 완주까지 손을 뗄 필요가 없는 고정 시퀀스이기 때문.
 const PET_LONG_ROTATE_DEG = -6; // 튜닝 대상
 const PET_LONG_TRANSLATE_DESIGN_PX = -8; // 튜닝 대상 (음수 = 위로)
 const PET_LONG_ROTATE_MS = 300;
 const PET_LONG_HOLD_MS = 600;
 const PET_LONG_RETURN_MS = 300;
 // PET_LONG_TODO: tiger-face-yawn1.png / yawn2.png / tiger-claws.png 도착 시,
-// 아래 handleTigerEvent()의 'petLong' 케이스에 §2-7 타임라인 그대로 얼굴 교체를
-// 끼워 넣을 것: 0ms normal → 120ms yawn1(입 조금) → 280ms yawn2(입 최대, 발톱
-// 팝인 250ms) → 880ms yawn1(입 줄어듦) → 1000ms normal(발톱 소멸) → 1180ms
-// 깜박임 1회(여운) → 1400ms 끝. 얼굴 레이어를 하나 더 두고(TigerArtwork 내부)
-// opacity 스왑 또는 source 스왑으로 구현.
+// 아래 playYawnSequence()에 §2-7 타임라인 그대로 얼굴 교체를 끼워 넣을 것: 0ms normal
+// → 120ms yawn1(입 조금) → 280ms yawn2(입 최대, 발톱 팝인 250ms) → 880ms yawn1(입
+// 줄어듦) → 1000ms normal(발톱 소멸) → 1180ms 깜박임 1회(여운) → 1400ms 끝. 얼굴
+// 레이어를 하나 더 두고(TigerArtwork 내부) opacity 스왑 또는 source 스왑으로 구현.
 
-// 이벤트 5(길게 눌렀다 떼기, headPop): §2-8 ①
-const PRESS_DESCEND_DESIGN_PX = 60; // 튜닝 대상 — 목 연장분(§2-2)과 맞물림, 임의로 늘리지 말 것
-const PRESS_DESCEND_MS = 400;
-const PRESS_CANCEL_RETURN_MS = 200; // 인식 실패/취소 시 안전망 복귀
+// 이벤트 5(아래로 당겼다 놓기, headPop): §2-8 ① — 2026-08-14, 길게 누르기에서 교체.
 /**
- * 머리가 튀어오르는 최고 지점 — 중립보다 이만큼 위(디자인 px).
- * 2026-08-11 실기기 확인 후 30 → 60 으로 2배. 머리 밑선이 281이므로 60px 상승 시
- * 머리 바닥이 221, 목 상단이 224 → 목 끝에서 막 떨어지는 지점이다.
- * 더 확실한 "분리"를 원하면 90(가이드 §2-8 원안, 갭 33px)까지 올리면 된다. 튜닝 대상.
+ * 당기는 동안 고무줄 저항이 걸리는 최대치(디자인 px). 목 연장분(§2-2)과 맞물리므로
+ * 임의로 늘리지 말 것. `eased = MAX * (1 - Math.exp(-dy / MAX))` 감쇠식의 MAX.
  */
-const HEADPOP_GAP_DESIGN_PX = 60;
+const PULL_MAX_DESIGN_PX = 60; // 튜닝 대상 — 목 연장분과 맞물림
+/** 이만큼 당기면 "장전"(놓으면 튕김 발동). 시간 조건은 없다 — §2-8 ① */
+const PULL_ARM_DESIGN_PX = 40; // 튜닝 대상
 const HEADPOP_RISE_MS = 180;
 const HEADPOP_HOLD_MS = 150;
 const HEADPOP_RETURN_MS = 300;
+/**
+ * 머리가 튀어오르는 최고 지점 — 중립보다 이만큼 위(디자인 px).
+ * 2026-08-14: 60 → 90 (사용자 지정, 더 확실한 분리). 머리 밑선이 281이므로 90px 상승 시
+ * 머리 바닥이 191, 목 상단이 224 → 갭 33px.
+ */
+const HEADPOP_GAP_DESIGN_PX = 90;
 
 const ALL_SOUNDS: TigerSound[] = ['roar', 'purr', 'huh', 'yelp'];
+
+/** 탭 1회의 랜덤 효과 4종 (design/홈화면-에셋-가이드.md §2-4 "머리 이벤트" 표). */
+type TigerEffect = 'nudge' | 'tilt' | 'headDown' | 'yawn';
+const ALL_TAP_EFFECTS: TigerEffect[] = ['nudge', 'tilt', 'headDown', 'yawn'];
+
+/**
+ * "장전(40 디자인 px)"에 도달했다는 신호 (§2-8 ①). 손가락이 머리를 가리고 있어
+ * 시각 신호가 안 보이므로 촉각으로 알린다. 실패해도 무시한다 — 햅틱이 없는
+ * 기기/설정에서도 제스처 자체는 정상 동작해야 한다.
+ */
+function triggerHaptic() {
+  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+}
 
 // ── 깜박임 (§2-4 "평상시") ────────────────────────────────────────────
 const BLINK_DURATION_MS = 110; // 하드컷 — 페이드 금지
@@ -180,6 +228,7 @@ export default function TigerHero({
   wordsCount,
   dateLabel,
   onEnterWordbook,
+  scrollRef,
 }: TigerHeroProps) {
   const [renderedWidth, setRenderedWidth] = useState(0);
 
@@ -198,6 +247,8 @@ export default function TigerHero({
   const busyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isPettingRef = useRef(false);
   const lastSoundRef = useRef<TigerSound | null>(null);
+  const lastEffectRef = useRef<TigerEffect | null>(null);
+  const pullHapticFiredRef = useRef(false); // 이번 당기기에서 이미 햅틱을 울렸는지(재발화 방지)
   const blinkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function designPxToReal(designPx: number) {
@@ -227,28 +278,99 @@ export default function TigerHero({
     return candidates[Math.floor(Math.random() * candidates.length)];
   }
 
+  /** 탭 1회의 랜덤 효과 — 직전에 나온 효과는 후보에서 제외(2026-08-14). */
+  function pickRandomTapEffect(): TigerEffect {
+    const candidates = lastEffectRef.current
+      ? ALL_TAP_EFFECTS.filter((e) => e !== lastEffectRef.current)
+      : ALL_TAP_EFFECTS;
+    return candidates[Math.floor(Math.random() * candidates.length)];
+  }
+
+  // ── 탭 랜덤 효과 4종 — 기존 tripleTap/pet/petLong 시퀀스를 함수로 뽑아 공유한다 ──
+
+  /** 효과: 움찔(nudge) — scale 1.03 + 사운드 랜덤(직전 제외). 예전 'tap' 케이스 그대로. */
+  function playNudgeSequence() {
+    setBusyFor(TAP_TOTAL_MS);
+    eyeShutOpacity.value = 0; // 덮개 끔
+    playAndTrack(pickRandomTapSound());
+    headScale.value = withSequence(
+      withTiming(TAP_SCALE, { duration: TAP_TOTAL_MS / 2 }),
+      withTiming(1, { duration: TAP_TOTAL_MS / 2 }),
+    );
+  }
+
+  /** 효과: 갸우뚱(tilt) — rotate ±10° + huh.m4a 고정. 예전 'tripleTap' 케이스 그대로. */
+  function playTiltSequence() {
+    setBusyFor(TILT_IN_MS + TILT_HOLD_MS + TILT_OUT_MS);
+    eyeShutOpacity.value = 0; // 덮개 끔
+    playAndTrack('huh');
+    const dir = Math.random() < 0.5 ? -1 : 1;
+    headRotateDeg.value = withSequence(
+      withTiming(dir * TILT_ROTATE_DEG, { duration: TILT_IN_MS }),
+      withDelay(TILT_HOLD_MS, withTiming(0, { duration: TILT_OUT_MS })),
+    );
+  }
+
+  /**
+   * 효과: 머리 내려감(headDown) — purr.m4a 고정. 좌우 쓰다듬기(pet)와 달리 손을
+   * 떼지 않아도 스스로 내려갔다 돌아오는 고정 시퀀스라 busy로 잠근다.
+   */
+  function playHeadDownSequence() {
+    setBusyFor(TAP_HEADDOWN_DOWN_MS + TAP_HEADDOWN_HOLD_MS + TAP_HEADDOWN_RETURN_MS);
+    playAndTrack('purr');
+    eyeShutOpacity.value = withSequence(
+      withTiming(1, { duration: 0 }), // 켬 — 눈 감고 골골 (즉시)
+      withDelay(
+        TAP_HEADDOWN_DOWN_MS + TAP_HEADDOWN_HOLD_MS,
+        withTiming(0, { duration: TAP_HEADDOWN_RETURN_MS }),
+      ),
+    );
+    headExtraTranslateY.value = withSequence(
+      withTiming(designPxToReal(PET_DOWN_DESIGN_PX), { duration: TAP_HEADDOWN_DOWN_MS }),
+      withDelay(TAP_HEADDOWN_HOLD_MS, withTiming(0, { duration: TAP_HEADDOWN_RETURN_MS })),
+    );
+  }
+
+  /**
+   * 효과: 하품(yawn) — roar.m4a 고정. 손으로 계속 쓰다듬어 1.5초를 넘긴 경우(petLong)와
+   * 탭 랜덤으로 뽑힌 경우 모두 이 시퀀스 하나를 공유한다(예전 'petLong' 케이스 그대로).
+   */
+  function playYawnSequence() {
+    setBusyFor(PET_LONG_ROTATE_MS + PET_LONG_HOLD_MS + PET_LONG_RETURN_MS);
+    eyeShutOpacity.value = 0; // 표 그대로 "끔" — normal 얼굴이라 뜬 눈이지만 스펙 그대로 따른다
+    playAndTrack('roar');
+    headRotateDeg.value = withSequence(
+      withTiming(PET_LONG_ROTATE_DEG, { duration: PET_LONG_ROTATE_MS }),
+      withDelay(PET_LONG_HOLD_MS, withTiming(0, { duration: PET_LONG_RETURN_MS })),
+    );
+    headExtraTranslateY.value = withSequence(
+      withTiming(designPxToReal(PET_LONG_TRANSLATE_DESIGN_PX), {
+        duration: PET_LONG_ROTATE_MS,
+      }),
+      withDelay(PET_LONG_HOLD_MS, withTiming(0, { duration: PET_LONG_RETURN_MS })),
+    );
+  }
+
   // ── 이벤트 판정 → 애니메이션/사운드 ───────────────────────────────
   function handleTigerEvent(event: TigerEvent) {
     switch (event) {
       case 'tap': {
-        setBusyFor(TAP_TOTAL_MS);
-        eyeShutOpacity.value = 0; // 덮개 끔
-        playAndTrack(pickRandomTapSound());
-        headScale.value = withSequence(
-          withTiming(TAP_SCALE, { duration: TAP_TOTAL_MS / 2 }),
-          withTiming(1, { duration: TAP_TOTAL_MS / 2 }),
-        );
-        break;
-      }
-      case 'tripleTap': {
-        setBusyFor(TRIPLE_TAP_IN_MS + TRIPLE_TAP_HOLD_MS + TRIPLE_TAP_OUT_MS);
-        eyeShutOpacity.value = 0; // 덮개 끔
-        playAndTrack('huh');
-        const dir = Math.random() < 0.5 ? -1 : 1;
-        headRotateDeg.value = withSequence(
-          withTiming(dir * TRIPLE_TAP_ROTATE_DEG, { duration: TRIPLE_TAP_IN_MS }),
-          withDelay(TRIPLE_TAP_HOLD_MS, withTiming(0, { duration: TRIPLE_TAP_OUT_MS })),
-        );
+        const effect = pickRandomTapEffect();
+        lastEffectRef.current = effect;
+        switch (effect) {
+          case 'nudge':
+            playNudgeSequence();
+            break;
+          case 'tilt':
+            playTiltSequence();
+            break;
+          case 'headDown':
+            playHeadDownSequence();
+            break;
+          case 'yawn':
+            playYawnSequence();
+            break;
+        }
         break;
       }
       case 'pet': {
@@ -263,27 +385,13 @@ export default function TigerHero({
         break;
       }
       case 'petLong': {
-        setBusyFor(PET_LONG_ROTATE_MS + PET_LONG_HOLD_MS + PET_LONG_RETURN_MS);
-        eyeShutOpacity.value = 0; // 표 그대로 "끔" — normal 얼굴이라 뜬 눈이지만 스펙 그대로 따른다
-        playAndTrack('roar');
-        headRotateDeg.value = withSequence(
-          withTiming(PET_LONG_ROTATE_DEG, { duration: PET_LONG_ROTATE_MS }),
-          withDelay(PET_LONG_HOLD_MS, withTiming(0, { duration: PET_LONG_RETURN_MS })),
-        );
-        headExtraTranslateY.value = withSequence(
-          withTiming(designPxToReal(PET_LONG_TRANSLATE_DESIGN_PX), {
-            duration: PET_LONG_ROTATE_MS,
-          }),
-          withDelay(PET_LONG_HOLD_MS, withTiming(0, { duration: PET_LONG_RETURN_MS })),
-        );
+        playYawnSequence();
         break;
       }
       case 'headPop': {
         setBusyFor(HEADPOP_RISE_MS + HEADPOP_HOLD_MS + HEADPOP_RETURN_MS);
         eyeShutOpacity.value = 0; // 덮개 끔
         playAndTrack('yelp');
-        // onPressStateChange(false)가 안전망으로 0 복귀를 걸어 두지만, 바로 뒤이어
-        // (같은 JS 틱에서) 여기서 실제 상승 시퀀스로 덮어써 무효화한다.
         headExtraTranslateY.value = withSequence(
           withTiming(designPxToReal(-HEADPOP_GAP_DESIGN_PX), {
             duration: HEADPOP_RISE_MS,
@@ -302,29 +410,53 @@ export default function TigerHero({
   function handlePetEnd() {
     isPettingRef.current = false;
     if (eventBusyRef.current) {
-      // petLong 시퀀스가 이미 자체적으로 중립 복귀까지 재생 중 — 여기서 또 덮어쓰지 않는다.
+      // petLong(yawn) 시퀀스가 이미 자체적으로 중립 복귀까지 재생 중 — 여기서 또 덮어쓰지 않는다.
       return;
     }
     eyeShutOpacity.value = 0;
     headExtraTranslateY.value = withTiming(0, { duration: PET_RETURN_MS });
   }
 
-  function handlePressStateChange(pressing: boolean) {
-    if (pressing) {
-      headExtraTranslateY.value = withTiming(designPxToReal(PRESS_DESCEND_DESIGN_PX), {
-        duration: PRESS_DESCEND_MS,
-      });
+  /**
+   * 아래로 당기는 중. dy는 손가락 세로 이동량(화면 px, 0 이상)이다. 고무줄 저항을 걸어
+   * 최대 PULL_MAX_DESIGN_PX(디자인 px)에서 서서히 둔화시키고, PULL_ARM_DESIGN_PX를
+   * 넘으면 "장전"으로 보고 햅틱을 1회 울린다(§2-8 ①).
+   *
+   * 반환값(armed)은 useTigerGestures가 그대로 캐싱했다가 onPullEnd에 실어 보낸다 —
+   * 래칫 방식: 한 번 넘으면(pullHapticFiredRef가 true) 손가락이 살짝 되돌아와도
+   * 장전 상태를 유지한다(순간값 비교보다 아이 손끝의 미세한 떨림에 관대하다).
+   */
+  function handlePullMove(dy: number): boolean {
+    const maxReal = designPxToReal(PULL_MAX_DESIGN_PX);
+    if (maxReal > 0) {
+      const eased = maxReal * (1 - Math.exp(-dy / maxReal));
+      headExtraTranslateY.value = eased;
+    }
+    const armThresholdReal = designPxToReal(PULL_ARM_DESIGN_PX);
+    if (dy >= armThresholdReal && !pullHapticFiredRef.current) {
+      pullHapticFiredRef.current = true;
+      triggerHaptic();
+    }
+    return pullHapticFiredRef.current;
+  }
+
+  /** 당기기 끝. armed면 headPop(튕김) 시퀀스, 아니면 이벤트 없이 스프링으로 원위치. */
+  function handlePullEnd(armed: boolean) {
+    pullHapticFiredRef.current = false; // 다음 당기기를 위해 초기화
+    if (armed) {
+      handleTigerEvent('headPop');
     } else {
-      // 안전망 — headPop이 뒤이어 발화하면 handleTigerEvent가 즉시 덮어쓴다.
-      headExtraTranslateY.value = withTiming(0, { duration: PRESS_CANCEL_RETURN_MS });
+      headExtraTranslateY.value = withSpring(0, { damping: 14, stiffness: 180 });
     }
   }
 
   const { gesture } = useTigerGestures({
     onEvent: handleTigerEvent,
     onPetEnd: handlePetEnd,
-    onPressStateChange: handlePressStateChange,
+    onPullMove: handlePullMove,
+    onPullEnd: handlePullEnd,
     isBusy: () => eventBusyRef.current,
+    scrollRef,
   });
 
   // ── 깜박임 (§2-4 "평상시") ─────────────────────────────────────────

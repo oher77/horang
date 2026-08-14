@@ -1,5 +1,5 @@
 import { router, Stack, useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   AppState,
@@ -32,6 +32,8 @@ export default function Index() {
   const { width: screenWidth } = useWindowDimensions();
   /** 시안 px → 화면 px 배율. 이 값 하나로 전체 레이아웃이 결정된다. */
   const s = screenWidth / MOCKUP.width;
+  /** 호랑이 머리 "아래로 당기기" 제스처가 세로 스크롤을 이기게 하는 데 필요한 ref. */
+  const scrollRef = useRef<ScrollView>(null);
 
   const [today, setToday] = useState(() => epochDayToDateString(todayEpochDay()));
   const [day, setDay] = useState<DayWithWords | null>(null);
@@ -95,7 +97,11 @@ export default function Index() {
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        ref={scrollRef}
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+      >
         <NotebookBackground>
           <View
             style={{
@@ -122,6 +128,7 @@ export default function Index() {
                   dayIndex={day.day_index}
                   wordsCount={day.words_count}
                   dateLabel={today}
+                  scrollRef={scrollRef}
                   onEnterWordbook={() =>
                     router.push({
                       pathname: '/day/[dayId]',

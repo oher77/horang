@@ -42,7 +42,12 @@ const DOT_SIZE = 26;
 
 /** "🔥 N일 연속" — 시안 실측(전구 아래, grass-box 좌표 y 472~552). 실기기 미세조정 대상. */
 const STREAK_TOP = 455;
-const STREAK_FONT_SIZE = 105;
+/*
+ * 글자 크기 비율(2026-08-14 사용자 지정): "N일 연속" = 52.
+ * 버튼 라벨 "복습"(150, 비율 90) 기준 환산. 잔디 좌표계(928)와 버튼 좌표계(866)는
+ * 다르지만 화면에 그려질 때 둘 다 같은 배율 `scale`이 곱해지므로 비율이 그대로 반영된다.
+ */
+const STREAK_FONT_SIZE = 87;
 
 export default function GrassGauge({
   slots,

@@ -44,6 +44,8 @@ const ITEMS: MenuItem[] = [
     at: PLACE.review,
     route: '/review',
     label: { text: '복습', fontSize: 150, centerX: 0.491, centerY: 0.482 },
+    // 글자 크기 비율(2026-08-14 사용자 지정): 복습 : 발음체크 : 테스트 = 90 : 80 : 100.
+    // 복습 150을 기준(=90)으로 환산 → 발음체크 133, 테스트 167.
   },
   {
     key: 'pronunciation',
@@ -51,7 +53,7 @@ const ITEMS: MenuItem[] = [
     at: PLACE.pronunciation,
     route: '/pronunciation',
     // 오른쪽에 개구리가 있어 글자가 왼쪽으로 치우쳐 있다.
-    label: { text: '발음체크', fontSize: 132, centerX: 0.385, centerY: 0.554 },
+    label: { text: '발음체크', fontSize: 133, centerX: 0.385, centerY: 0.554 },
   },
   {
     key: 'test',
@@ -59,7 +61,7 @@ const ITEMS: MenuItem[] = [
     at: PLACE.test,
     route: '/test',
     // 오른쪽에 호랑이가 있어 글자가 왼쪽으로 치우쳐 있다.
-    label: { text: '테스트', fontSize: 120, centerX: 0.395, centerY: 0.536 },
+    label: { text: '테스트', fontSize: 167, centerX: 0.395, centerY: 0.536 },
   },
   {
     key: 'achievements',
