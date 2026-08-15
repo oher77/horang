@@ -20,13 +20,22 @@ import { ScrollView } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 /**
- * 홈 화면 — `design/호랑이잉글리시.png` 시안 절대좌표로 배치한다.
- * 좌표와 배율 규칙은 `components/home/mockupLayout.ts` 참조.
+ * 홈 화면 — `design/호랑이잉글리시.png` 시안 좌표로 절대배치한다.
+ *
+ * 단, **세로 기준점은 시안이 아니라 안전영역**이다(`PLACE`의 y = 시안 y − 222).
+ * 시안이 원본인 것은 요소 간 **상대** 위치이고, 화면에서의 절대 세로 위치는 아니다.
+ * 좌표계·배율 규칙과 그 근거는 `components/home/mockupLayout.ts` 헤더 참조.
  */
 
 import GrassGauge from '../components/home/GrassGauge';
 import HomeMenuButtons from '../components/home/HomeMenuButtons';
-import { canvasHeight, MOCKUP, place, PLACE } from '../components/home/mockupLayout';
+import {
+  canvasHeight,
+  MOCKUP_WIDTH,
+  place,
+  PLACE,
+  TOP_GAP_DESIGN_PX,
+} from '../components/home/mockupLayout';
 import NotebookBackground, { PAPER_COLOR } from '../components/home/NotebookBackground';
 import TigerHero from '../components/home/TigerHero';
 import { epochDayToDateString, todayEpochDay } from '../lib/dates';
@@ -37,7 +46,7 @@ export default function Index() {
   const insets = useSafeAreaInsets();
   const { width: screenWidth } = useWindowDimensions();
   /** 시안 px → 화면 px 배율. 이 값 하나로 전체 레이아웃이 결정된다. */
-  const s = screenWidth / MOCKUP.width;
+  const s = screenWidth / MOCKUP_WIDTH;
   /** 호랑이 머리 "아래로 당기기" 제스처가 세로 스크롤을 이기게 하는 데 필요한 ref. */
   const scrollRef = useRef<ScrollView>(null);
 
@@ -109,12 +118,26 @@ export default function Index() {
         contentContainerStyle={styles.scrollContent}
       >
         <NotebookBackground>
-          <View
-            style={{
-              height: canvasHeight(s) + insets.top + insets.bottom,
-              paddingTop: insets.top,
-            }}
-          >
+          {/*
+            상단 앵커 — 캔버스는 안전영역 아래끝에서 시작한다 (2026-08-15).
+            `PLACE`의 y가 이미 안전영역 기준(시안 y − 222)이라 여기서 인셋만 얹으면 된다.
+            근거와 기기별 수치는 `mockupLayout.ts` 헤더 참조.
+
+            **인셋을 `paddingTop`으로 주지 말 것.** 캔버스 자식이 전부 `position:'absolute'`라
+            padding이 자식을 밀지 못하고 높이만 늘려서, 그 인셋이 통째로 캔버스 **아래**
+            여백으로 남는다(2026-08-15 실기기에서 발생). 형제 View의 높이로 줘야 한다.
+          */}
+          <View style={{ height: insets.top + TOP_GAP_DESIGN_PX * s }} />
+
+          {/*
+            **하단에는 인셋을 주지 않는다.** 캔버스 맨 아래 `deco-mountains`가 장식 띠라
+            홈 인디케이터가 그 위에 얹혀도 가려질 정보가 없고 탭할 것도 없다. 오히려
+            여백이 생기면 시안이 거기서 끊긴 것처럼 보인다.
+            **여백이 없다고 버그로 오해해 인셋을 더하지 말 것.**
+            (단어장 화면은 반대다 — 마지막 행의 좌우 스와이프가 시스템 제스처와 겹치므로
+             하단 인셋이 필요하다. app/day/[dayId].tsx 참조.)
+          */}
+          <View style={{ height: canvasHeight(s) }}>
             <Pressable style={place(PLACE.sun, s)} onPress={() => router.push('/settings')}>
               <Image
                 source={require('../assets/images/btn-settings.png')}
