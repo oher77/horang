@@ -120,9 +120,9 @@ const BUBBLE_AREA = {
  * 여기에는 보정값을 섞지 말 것. 폰트를 바꿔도 이 값은 그대로 둔다.
  */
 const BUBBLE_LINES = {
-  date: { centerY: 111, fontSize: 87 },
-  day: { centerY: 281, fontSize: 233 },
-  words: { centerY: 428, fontSize: 87 },
+  date: { centerY: 125, fontSize: 87 },
+  day: { centerY: 280, fontSize: 233 },
+  words: { centerY: 435, fontSize: 87 },
 } as const;
 
 const WEEKDAY_LABELS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
