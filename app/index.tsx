@@ -84,6 +84,15 @@ export default function Index() {
       });
   }, []);
 
+  // 오늘 단어장 진입 — 입구가 둘이다(말풍선, 잔디 게이지의 열린 전구). 같은 곳으로 보낸다.
+  const goToWordbook = useCallback(() => {
+    if (!day) return;
+    router.push({
+      pathname: '/day/[dayId]',
+      params: { dayId: String(day.id), dayIndex: String(day.day_index) },
+    });
+  }, [day]);
+
   useEffect(() => {
     loadTodayDay();
   }, [loadTodayDay]);
@@ -153,12 +162,7 @@ export default function Index() {
                   wordsCount={day.words_count}
                   dateLabel={today}
                   scrollRef={scrollRef}
-                  onEnterWordbook={() =>
-                    router.push({
-                      pathname: '/day/[dayId]',
-                      params: { dayId: String(day.id), dayIndex: String(day.day_index) },
-                    })
-                  }
+                  onEnterWordbook={goToWordbook}
                 />
               </View>
             )}
@@ -176,11 +180,20 @@ export default function Index() {
               (2026-08-14 정정. 그 전엔 반대로 알고 순서가 뒤바뀌어 있었다.)
               잔디 위쪽은 풀잎 끝이라 거의 투명해서, 순서만 바꿔도 발이 풀 사이로 비치는
               시안 모습이 그대로 재현된다 — 별도 마스킹 불필요.
-              말풍선 탭 영역 아래 16px과 겹치지만 GrassGauge가 pointerEvents="none"이라
-              터치는 그대로 통과한다.
+              말풍선 탭 영역 아래 16px이 잔디에 덮여 그 띠는 탭이 안 먹는다 — 사람은
+              말풍선 가운데를 누르므로 무시하기로 했다(2026-08-15). 이거 하나 살리자고
+              GrassGauge를 pointerEvents 묶음으로 감싸지 말 것.
             */}
             <View style={place(PLACE.grass, s)}>
-              <GrassGauge slots={todaySlots} streak={streak} activeSlot={activeSlot} scale={s} />
+              <GrassGauge
+                slots={todaySlots}
+                streak={streak}
+                activeSlot={activeSlot}
+                scale={s}
+                // 빨간 점이 뜬 전구도 오늘 단어장 입구다 — 점은 누르고 싶어지는 표시라서.
+                // 오늘 Day를 아직 못 읽었으면 넘기지 않아 눌리지 않는다.
+                onPressActiveSlot={day ? goToWordbook : undefined}
+              />
             </View>
 
             <HomeMenuButtons scale={s} />

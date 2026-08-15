@@ -1,4 +1,4 @@
-import { Image, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { HANDWRITING_FONT, handwritingLineHeight, handwritingTop } from '../../lib/fonts';
 
@@ -39,6 +39,27 @@ const GLOW_CORE_CX = 135;
 /** 빨간 점 — 윤곽선 상단(y 246)보다 위. */
 const DOT_Y = 205;
 const DOT_SIZE = 26;
+/**
+ * 평상시 / 눌렸을 때 색. **투명도가 아니라 색을 바꾼다**(2026-08-15 실기기 확인) —
+ * 점이 실기기에서 약 8.7pt라 살짝 흐려지는 정도는 눈에 안 들어온다.
+ */
+const DOT_COLOR = '#e02020';
+const DOT_COLOR_PRESSED = '#ff8c1a';
+
+/**
+ * 열린 슬롯 탭 영역 — 빨간 점 + 그 아래 전구를 통째로 덮는다 (2026-08-15).
+ *
+ * **점만 탭 영역으로 쓸 수 없다.** 26px = 실기기 약 8.7pt라 손가락이 못 맞춘다.
+ * `bulbs.png` 실측 윤곽선(y 245~455, 폭 140~145)까지 내려 잡아 약 50 × 88pt를 만든다.
+ * 사용자가 누르려는 대상도 점이 아니라 "점이 찍힌 전구"다.
+ *
+ * **위 끝 195는 말풍선과의 충돌을 막는 값이다.** 캔버스 기준 1147 + 195 = 1342이고
+ * 말풍선 탭 영역 아래끝은 1163(호랑이 209 + 954) — 179px 여유가 있다. 이 값을 내리면
+ * 오늘 단어장 진입이 말풍선과 두 곳에서 겹친다. **줄이려거든 그 계산을 먼저 다시 할 것.**
+ *
+ * 좌우 ±75는 전구 간격 171의 절반(85.5)보다 좁아 옆 전구를 침범하지 않는다.
+ */
+const HIT = { top: 195, bottom: 460, halfWidth: 75 };
 
 /**
  * "🔥 N일 연속" — 불꽃과 글자를 **한 줄(row)로 묶어 덩어리째 가운데 정렬**한다 (2026-08-15).
@@ -90,12 +111,19 @@ export default function GrassGauge({
   streak,
   activeSlot,
   scale,
+  onPressActiveSlot,
 }: {
   slots: boolean[] | null;
   streak: number;
   activeSlot: number | null;
   /** 시안 px → 화면 px 배율. grass-box도 시안에서 1:1로 잘렸으므로 같은 배율이 그대로 통한다. */
   scale: number;
+  /**
+   * 빨간 점이 찍힌 전구를 눌렀을 때 (오늘 단어장 진입). 빠지면 탭 영역 자체가 생기지 않는다.
+   * **판정을 여기서 새로 하지 않는다** — 점을 찍는 조건(`activeSlot`)과 좌표를 그대로 쓴다.
+   * 부모가 아직 오늘 Day를 못 읽었으면 `undefined`를 넘겨 누를 수 없게 한다.
+   */
+  onPressActiveSlot?: () => void;
 }) {
   // ★ 부모 크기에 의존하지 않는다. `%`·`StyleSheet.absoluteFill`로 부모 높이에 기대면
   //   부모 높이가 안 잡히는 순간 이미지가 원본 크기로 흘러넘친다(2026-08-13 실기기에서 발생 —
@@ -111,13 +139,12 @@ export default function GrassGauge({
   };
 
   return (
-    // pointerEvents="none" — 잔디는 호랑이 **위**에 그려지므로(app/index.tsx 렌더 순서),
-    // 이게 없으면 겹치는 구간(말풍선 탭 영역 아래 16px)의 터치를 잔디가 가로챈다.
-    // 잔디는 보여주기만 하는 레이어라 터치를 받을 이유가 없다.
-    <View
-      style={{ width: boxWidth, height: boxHeight, overflow: 'hidden' }}
-      pointerEvents="none"
-    >
+    // ★ 터치 — 열린 전구 Pressable 하나만 받고 나머지는 아무 핸들러가 없다.
+    //   `pointerEvents`는 쓰지 않는다. 잔디가 호랑이 **위**에 그려져서(app/index.tsx 렌더
+    //   순서) 말풍선 탭 영역과 아래 16px이 겹치지만, 사람은 말풍선 가운데를 누르므로
+    //   그 띠를 못 받아도 무방하다고 정했다(2026-08-15 사용자 판단). 그거 하나 살리려고
+    //   레이어를 `pointerEvents` 묶음으로 감싸는 건 배보다 배꼽이 크다.
+    <View style={{ width: boxWidth, height: boxHeight, overflow: 'hidden' }}>
       <Image
         source={require('../../assets/images/grass-box.png')}
         style={layerStyle}
@@ -148,21 +175,6 @@ export default function GrassGauge({
         style={layerStyle}
         resizeMode="contain"
       />
-
-      {activeSlot !== null && activeSlot < TOTAL_SLOTS && (
-        <View
-          style={[
-            styles.activeDot,
-            {
-              left: (BULB_CENTERS_X[activeSlot] - DOT_SIZE / 2) * scale,
-              top: DOT_Y * scale,
-              width: DOT_SIZE * scale,
-              height: DOT_SIZE * scale,
-              borderRadius: (DOT_SIZE * scale) / 2,
-            },
-          ]}
-        />
-      )}
 
       {/*
         "🔥 N일 연속" — 두 요소를 한 row에 담아 **덩어리째** 가운데 정렬한다.
@@ -212,14 +224,58 @@ export default function GrassGauge({
           {streak}일 연속
         </Text>
       </View>
+
+      {/*
+        빨간 점 = "지금 열린 슬롯" 표시이자 **오늘 단어장으로 가는 입구**다.
+        점을 찍는 조건·좌표를 그대로 탭 영역으로 쓴다 — 슬롯 판정을 두 번 하지 않는다.
+        (`HIT`이 점보다 훨씬 큰 이유는 위 상수 주석 참조.)
+
+        **반드시 맨 마지막 자식이어야 한다.** 위의 "N일 연속" row가 박스 전체를 덮는
+        오버레이라, 이게 그 앞에 오면 (나중에 그린 형제가 터치를 먼저 받으므로)
+        row가 탭을 가로채 전구가 눌리지 않는다. 순서만 지키면 `pointerEvents`가 필요 없다.
+        빨간 점(y 205)과 스트릭 글자(y 448~)는 안 겹쳐서 보이는 모습은 순서와 무관하다.
+      */}
+      {activeSlot !== null && activeSlot < TOTAL_SLOTS && (
+        <Pressable
+          onPress={onPressActiveSlot}
+          // 부모가 오늘 Day를 아직 못 읽었으면 눌러도 갈 곳이 없다 — 아예 타깃에서 뺀다.
+          pointerEvents={onPressActiveSlot ? 'auto' : 'none'}
+          accessibilityRole="button"
+          accessibilityLabel="지금 열린 시간대 — 오늘의 단어장 열기"
+          style={{
+            position: 'absolute',
+            left: (BULB_CENTERS_X[activeSlot] - HIT.halfWidth) * scale,
+            top: HIT.top * scale,
+            width: HIT.halfWidth * 2 * scale,
+            height: (HIT.bottom - HIT.top) * scale,
+          }}
+        >
+          {({ pressed }) => (
+            // 눌린 반응은 점에만 준다 — 전구는 공용 이미지라 한 칸만 밝히지 못한다.
+            <View
+              style={[
+                styles.activeDot,
+                {
+                  left: (HIT.halfWidth - DOT_SIZE / 2) * scale,
+                  top: (DOT_Y - HIT.top) * scale,
+                  width: DOT_SIZE * scale,
+                  height: DOT_SIZE * scale,
+                  borderRadius: (DOT_SIZE * scale) / 2,
+                  backgroundColor: pressed ? DOT_COLOR_PRESSED : DOT_COLOR,
+                },
+              ]}
+            />
+          )}
+        </Pressable>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  // 색은 여기서 정하지 않는다 — 눌림 상태에 따라 바뀌므로 렌더에서 준다(DOT_COLOR*).
   activeDot: {
     position: 'absolute',
-    backgroundColor: '#e02020',
   },
   // 둘 다 row 안의 in-flow 자식이다 — `position:'absolute'`나 `left/right`를 다시 넣지 말 것.
   // (2026-08-15 이전엔 absolute + left:0/right:0 + textAlign:center + marginLeft 조합이었는데,
