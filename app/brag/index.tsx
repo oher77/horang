@@ -159,7 +159,7 @@ export default function BragScreen() {
       const uri = await captureRef(cardRef, { format: 'png', quality: 1, result: 'tmpfile' });
       await Sharing.shareAsync(uri, {
         mimeType: 'image/png',
-        dialogTitle: '호랑이 잉글리시 자랑하기 리포트',
+        dialogTitle: '호랑잉글리시 자랑하기 리포트',
         UTI: 'public.png',
       });
       // 공유 시트가 닫히면(전송·취소 모두) 발사 완료로 보고 축포를 터뜨린다.
@@ -202,7 +202,7 @@ export default function BragScreen() {
             {/* 캡처 대상: 흰 배경 카드 묶음 */}
             <View ref={cardRef} collapsable={false} style={styles.card}>
               <View style={styles.cardHeader}>
-                <Text style={styles.cardHeaderTitle}>{/*🐯 */}호랑이 잉글리시 자랑하기 리포트</Text>
+                <Text style={styles.cardHeaderTitle}>{/*🐯 */}호랑잉글리시 자랑하기 리포트</Text>
                 <Text style={styles.cardHeaderPeriod}>{periodLabel}</Text>
               </View>
 
@@ -269,7 +269,7 @@ export default function BragScreen() {
                     💌 미지급 {report.unpaidTotal.toLocaleString()}원 · {report.unpaidCount}건
                   </Text>
                 )}
-                <Text style={styles.stamp}>🐯 호랑이 잉글리시 인증</Text>
+                <Text style={styles.stamp}>🐯 호랑잉글리시 인증</Text>
               </View>
             </View>
 

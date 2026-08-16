@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "호랑이 잉글리시",
+    "name": "호랑잉글리시",
     "slug": "horang-english",
     "scheme": "horang-english",
     "version": "1.0.0",
@@ -9,7 +9,16 @@
     "userInterfaceStyle": "light",
     "plugins": [
       "expo-router",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-1.png",
+          "imageWidth": 393,
+          "resizeMode": "contain",
+          "backgroundColor": "#fffbe8"
+        }
+      ]
     ],
     "ios": {
       "supportsTablet": true,

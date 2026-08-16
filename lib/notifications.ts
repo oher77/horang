@@ -97,7 +97,7 @@ function slotOrdinal(slotIndex: number): number {
 async function scheduleSlotAt(target: Date, slotIndex: number): Promise<void> {
   await Notifications.scheduleNotificationAsync({
     content: {
-      title: '호랑이 잉글리시 🐯',
+      title: '호랑잉글리시 🐯',
       body: `인출 타임! 오늘 ${slotOrdinal(slotIndex)}번째 미션 시간이 열렸어요`,
       sound: true,
     },
@@ -172,7 +172,7 @@ export async function scheduleTestNotification(): Promise<boolean> {
 
     await Notifications.scheduleNotificationAsync({
       content: {
-        title: '호랑이 잉글리시 🐯',
+        title: '호랑잉글리시 🐯',
         body: '테스트 알림이에요! 잘 도착했다면 준비 완료입니다.',
         sound: true,
       },
