@@ -21,8 +21,12 @@
       ]
     ],
     "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "com.heruse.horang"
+      "supportsTablet": false,
+      "bundleIdentifier": "com.heruse.horang",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSPhotoLibraryAddUsageDescription": "자랑하기 리포트를 사진 앱에 저장할 때 필요합니다."
+      }
     },
     "android": {
       "package": "com.heruse.horang",
