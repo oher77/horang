@@ -2,6 +2,7 @@
   "expo": {
     "name": "호랑잉글리시",
     "slug": "horang-english",
+    "owner": "her-use",
     "scheme": "horang-english",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -40,6 +41,12 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "7cac2590-db5e-40b1-8fdb-d061058ea841"
+      }
     }
   }
 }
