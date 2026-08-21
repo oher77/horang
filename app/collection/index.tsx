@@ -3,6 +3,11 @@
  *
  * 홈 화면 리본 아이콘의 라우팅 목적지만 먼저 연결한다 — "획득물 페이지는 아직
  * 없으므로 라우팅만 연결하고 화면은 나중에 만든다"(가이드 §6).
+ *
+ * **현재 이 화면은 어디서도 도달할 수 없다** (2026-08-21) — 외부 TestFlight 심사에서
+ * 미완성 화면이 App Completeness에 걸리지 않도록 리본을 장식으로 바꾸고 라우팅을 뗐다.
+ * 획득물을 실제로 만들 때 `components/home/HomeMenuButtons.tsx`의 collection 항목에
+ * `route: '/collection'`을 되살리면 다시 연결된다.
  */
 
 import { router, Stack } from 'expo-router';

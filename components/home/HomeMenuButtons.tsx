@@ -1,6 +1,6 @@
 import { router, type Href } from 'expo-router';
 import { Fragment } from 'react';
-import { Image, Pressable, StyleSheet, Text } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { HANDWRITING_FONT, handwritingLineHeight, handwritingTop } from '../../lib/fonts';
 import { place, PLACE, type Placement } from './mockupLayout';
@@ -24,7 +24,11 @@ interface MenuItem {
   key: string;
   source: number;
   at: Placement;
-  route: Href;
+  /**
+   * 없으면 **장식**이다 — 탭이 안 되는 그림으로만 렌더한다(Pressable을 씌우지 않는다).
+   * 리본(획득물)이 여기 해당한다: 화면이 아직 없어서 라우팅을 떼어냈다. 아래 항목 주석 참조.
+   */
+  route?: Href;
   /**
    * 라벨이 없는 항목(꽃·리본)은 undefined.
    *
@@ -78,42 +82,58 @@ const ITEMS: MenuItem[] = [
     route: '/achievements',
   },
   {
+    // 리본(획득물) — **장식이다. 일부러 route가 없다.**
+    // 획득물 화면은 스펙 자체가 없고(가이드 §6 "화면은 나중에"), 눌러서 "준비 중" 화면이
+    // 뜨는 상태로 심사에 내면 App Review 가이드라인 2.1(App Completeness)에 걸린다.
+    // 그래서 2026-08-21 외부 TestFlight 준비 중 라우팅을 떼고 그림만 남겼다 —
+    // 딸 시안의 하단 구성을 그대로 지키면서 미완성 화면만 없앤다.
+    // 나중에 획득물을 만들면 `route: '/collection'` 한 줄을 되살리면 된다.
     key: 'collection',
     source: require('../../assets/images/btn-collection.png'),
     at: PLACE.ribbon,
-    route: '/collection',
   },
 ];
 
 export default function HomeMenuButtons({ scale }: { scale: number }) {
   return (
     <Fragment>
-      {ITEMS.map((item) => (
-        <Pressable
-          key={item.key}
-          style={place(item.at, scale)}
-          onPress={() => router.push(item.route)}
-        >
-          <Image source={item.source} style={styles.fill} resizeMode="contain" />
+      {ITEMS.map((item) => {
+        const content = (
+          <Fragment>
+            <Image source={item.source} style={styles.fill} resizeMode="contain" />
 
-          {item.label && (
-            <Text
-              style={[
-                styles.label,
-                {
-                  fontSize: item.label.fontSize * scale,
-                  lineHeight: handwritingLineHeight(item.label.fontSize) * scale,
-                  top: handwritingTop(item.label.centerY, item.label.fontSize) * scale,
-                  // 글자 중심을 버튼 중심에서 얼마나 옮길지 (좌우 0 + textAlign center 기준).
-                  marginLeft: (item.label.centerX - item.at.w / 2) * scale,
-                },
-              ]}
-            >
-              {item.label.text}
-            </Text>
-          )}
-        </Pressable>
-      ))}
+            {item.label && (
+              <Text
+                style={[
+                  styles.label,
+                  {
+                    fontSize: item.label.fontSize * scale,
+                    lineHeight: handwritingLineHeight(item.label.fontSize) * scale,
+                    top: handwritingTop(item.label.centerY, item.label.fontSize) * scale,
+                    // 글자 중심을 버튼 중심에서 얼마나 옮길지 (좌우 0 + textAlign center 기준).
+                    marginLeft: (item.label.centerX - item.at.w / 2) * scale,
+                  },
+                ]}
+              >
+                {item.label.text}
+              </Text>
+            )}
+          </Fragment>
+        );
+
+        // route가 없는 항목(리본)은 장식이므로 Pressable로 감싸지 않는다 —
+        // onPress 없는 Pressable은 눌러도 아무 일이 없으면서 터치만 삼켜 "고장 난 버튼"으로 보인다.
+        const { route } = item;
+        if (route === undefined) {
+          return <View key={item.key} style={place(item.at, scale)} pointerEvents="none">{content}</View>;
+        }
+
+        return (
+          <Pressable key={item.key} style={place(item.at, scale)} onPress={() => router.push(route)}>
+            {content}
+          </Pressable>
+        );
+      })}
     </Fragment>
   );
 }
