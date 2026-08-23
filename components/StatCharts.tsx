@@ -42,7 +42,8 @@ export function DailyTrendBarChart({
   const max = Math.max(0, ...values);
 
   if (max === 0) {
-    return <Text style={styles.emptyText}>{emptyText}</Text>;
+    // 차트 라벨은 SVG 좌표에 맞춰 배치되므로 OS 텍스트 크기 배율이 들어오면 어긋난다.
+    return <Text allowFontScaling={false} style={styles.emptyText}>{emptyText}</Text>;
   }
 
   const midIndex = Math.floor((points.length - 1) / 2);
@@ -58,7 +59,10 @@ export function DailyTrendBarChart({
             <View key={p.day} style={styles.trendBarItem}>
               {/* 마지막 슬롯 폭(~12px)에 갇히면 숫자가 잘리므로, 고정폭 우측정렬로
                   차트 안쪽(왼쪽)을 향해 넘치게 한다. */}
-              <Text style={[styles.trendValueLabel, isLast && styles.trendValueLabelLast]}>
+              <Text
+                allowFontScaling={false}
+                style={[styles.trendValueLabel, isLast && styles.trendValueLabelLast]}
+              >
                 {isLast ? value : ''}
               </Text>
               <View style={styles.trendBarTrack}>
@@ -69,9 +73,15 @@ export function DailyTrendBarChart({
         })}
       </View>
       <View style={styles.trendDateRow}>
-        <Text style={styles.trendDateLabel}>{shortDateLabel(points[0].day)}</Text>
-        <Text style={styles.trendDateLabel}>{shortDateLabel(points[midIndex].day)}</Text>
-        <Text style={styles.trendDateLabel}>{shortDateLabel(points[points.length - 1].day)}</Text>
+        <Text allowFontScaling={false} style={styles.trendDateLabel}>
+          {shortDateLabel(points[0].day)}
+        </Text>
+        <Text allowFontScaling={false} style={styles.trendDateLabel}>
+          {shortDateLabel(points[midIndex].day)}
+        </Text>
+        <Text allowFontScaling={false} style={styles.trendDateLabel}>
+          {shortDateLabel(points[points.length - 1].day)}
+        </Text>
       </View>
     </View>
   );
@@ -127,7 +137,7 @@ export function AssetCurveChart({
   return (
     <View style={styles.curveWrap} onLayout={onLayout}>
       {!enoughData ? (
-        <Text style={styles.emptyText}>{emptyText}</Text>
+        <Text allowFontScaling={false} style={styles.emptyText}>{emptyText}</Text>
       ) : (
         width > 0 && <CurveBody width={width} values={values} unit={unit} />
       )}
@@ -179,11 +189,11 @@ function CurveBody({ width, values, unit }: { width: number; values: number[]; u
       </Svg>
 
       {/* 값 라벨은 SVG Text 대신 RN Text로 — 폰트·자간이 앱의 다른 숫자와 동일해진다. */}
-      <Text style={[styles.curveStartLabel, { left: CURVE_PAD_X }]}>
+      <Text allowFontScaling={false} style={[styles.curveStartLabel, { left: CURVE_PAD_X }]}>
         {startValue}
         {unit}
       </Text>
-      <Text style={[styles.curveEndLabel, { right: CURVE_PAD_X }]}>
+      <Text allowFontScaling={false} style={[styles.curveEndLabel, { right: CURVE_PAD_X }]}>
         {endValue}
         {unit}
       </Text>
@@ -207,7 +217,7 @@ export function ScoreBarChart({ bars, emptyText }: { bars: ScoreBar[]; emptyText
   const max = Math.max(0, ...bars.map((b) => b.value));
 
   if (max === 0) {
-    return <Text style={styles.emptyText}>{emptyText}</Text>;
+    return <Text allowFontScaling={false} style={styles.emptyText}>{emptyText}</Text>;
   }
 
   return (
@@ -216,11 +226,11 @@ export function ScoreBarChart({ bars, emptyText }: { bars: ScoreBar[]; emptyText
         const barHeight = b.value > 0 ? Math.max((b.value / max) * BAR_MAX_HEIGHT, 2) : 0;
         return (
           <View key={b.key} style={styles.barItem}>
-            <Text style={styles.barScoreLabel}>{b.topLabel}</Text>
+            <Text allowFontScaling={false} style={styles.barScoreLabel}>{b.topLabel}</Text>
             <View style={styles.barTrack}>
               <View style={[styles.barFill, { height: barHeight }]} />
             </View>
-            <Text style={styles.barDateLabel}>{b.bottomLabel}</Text>
+            <Text allowFontScaling={false} style={styles.barDateLabel}>{b.bottomLabel}</Text>
           </View>
         );
       })}

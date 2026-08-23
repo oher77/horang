@@ -163,13 +163,15 @@ function DayWordRowImpl({
             <RecallStageBadge stage={item.recall_stage} />
           </View>
 
-          <Text style={styles.numberCell}>{item.position + 1}</Text>
+          <Text style={styles.numberCell} maxFontSizeMultiplier={1.2}>
+            {item.position + 1}
+          </Text>
 
           <GestureDetector gesture={wordCellGesture}>
             <View style={[styles.wordCell, speaking && styles.wordCellSpeaking]}>
               <DustCoverOverlay hidden={showWordSweep} delayMs={columnHideDelayMs}>
                 <View style={styles.wordRow}>
-                  <Text style={styles.wordText} numberOfLines={1}>
+                  <Text style={styles.wordText} numberOfLines={1} maxFontSizeMultiplier={1.2}>
                     {item.headword}
                   </Text>
                 </View>
@@ -180,7 +182,7 @@ function DayWordRowImpl({
           <GestureDetector gesture={meaningCellGesture}>
             <View style={styles.meaningCell}>
               <DustCoverOverlay hidden={showMeaningSweep} delayMs={columnHideDelayMs}>
-                <Text style={styles.meaningText} numberOfLines={2}>
+                <Text style={styles.meaningText} numberOfLines={2} maxFontSizeMultiplier={1.2}>
                   {item.meaning_ko ?? '-'}
                 </Text>
               </DustCoverOverlay>
@@ -215,7 +217,7 @@ const styles = StyleSheet.create({
   },
   numberCell: {
     width: 28,
-    fontSize: 13,
+    fontSize: 14,
     color: '#999',
   },
   wordCell: {
@@ -229,7 +231,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   wordText: {
-    fontSize: 15,
+    fontSize: 17,
     fontWeight: '600',
     color: '#222',
   },
@@ -238,7 +240,7 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
   meaningText: {
-    fontSize: 15,
+    fontSize: 17,
     color: '#222',
   },
   swipeHint: {

@@ -1,9 +1,10 @@
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { AppState, StyleSheet, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { ReducedMotionConfig, ReduceMotion } from 'react-native-reanimated';
 
 import AnimatedSplash from '../components/AnimatedSplash';
 import { initDatabases } from '../lib/db';
@@ -93,32 +94,49 @@ export default function RootLayout() {
     return () => clearTimeout(id);
   }, [fontsSettled]);
 
+  // 본체는 초기화 단계에 따라 갈리지만, **early return을 쓰지 않고 body에 담아 두는 이유**가
+  // 있다: 아래 ReducedMotionConfig가 어느 분기에서도 **한 번만, 계속 마운트된 채로** 있어야
+  // 하기 때문이다. 이 컴포넌트는 언마운트될 때 이전 값으로 되돌리므로
+  // (`setEnabled(wasEnabled)`), 분기마다 따로 넣으면 분기가 바뀔 때마다 껐다 켜지고,
+  // 분기를 새로 추가하면서 빠뜨리면 동작 줄이기가 조용히 되살아난다.
+  let body: ReactNode;
+
   if (state === 'error') {
-    return (
+    body = (
       <View style={styles.center}>
         <Text style={styles.errorTitle}>초기화 중 문제가 발생했어요</Text>
         <Text style={styles.errorMessage}>{errorMessage}</Text>
       </View>
     );
-  }
-
-  // 폰트 대기 중에는 **아무것도 그리지 않는다.** 네이티브 스플래시가 화면을 덮고 있어
-  // 빈 화면이 보이지 않는다. 여기서 뭔가 그리면 기본 글꼴로 그려져 글자가 튄다.
-  // (폰트 로딩 실패는 앱을 막지 않는다 — 시스템 기본 글꼴로 떨어질 뿐이다.)
-  if (!fontsSettled) return null;
-
-  // 폰트는 됐고 DB 초기화만 남은 구간 — 글씨 쓰는 호랑이가 그동안을 채운다.
-  // 진행률 막대를 두지 않는 이유: DB 복사·폰트 로드 어느 쪽도 진행률을 알려주지 않아
-  // 실제 진행과 무관한 가짜 애니메이션이 된다. 애니메이션 자체가 인디케이터다.
-  if (state === 'loading' || !minSplashElapsed) {
-    return <AnimatedSplash />;
+  } else if (!fontsSettled) {
+    // 폰트 대기 중에는 **아무것도 그리지 않는다.** 네이티브 스플래시가 화면을 덮고 있어
+    // 빈 화면이 보이지 않는다. 여기서 뭔가 그리면 기본 글꼴로 그려져 글자가 튄다.
+    // (폰트 로딩 실패는 앱을 막지 않는다 — 시스템 기본 글꼴로 떨어질 뿐이다.)
+    body = null;
+  } else if (state === 'loading' || !minSplashElapsed) {
+    // 폰트는 됐고 DB 초기화만 남은 구간 — 글씨 쓰는 호랑이가 그동안을 채운다.
+    // 진행률 막대를 두지 않는 이유: DB 복사·폰트 로드 어느 쪽도 진행률을 알려주지 않아
+    // 실제 진행과 무관한 가짜 애니메이션이 된다. 애니메이션 자체가 인디케이터다.
+    body = <AnimatedSplash />;
+  } else {
+    body = (
+      <GestureHandlerRootView style={styles.root}>
+        {/* headerBackButtonDisplayMode: 뒤로가기에서 이전 화면 이름 텍스트를 빼고 < 화살표만 */}
+        <Stack screenOptions={{ headerBackButtonDisplayMode: 'minimal' }} />
+      </GestureHandlerRootView>
+    );
   }
 
   return (
-    <GestureHandlerRootView style={styles.root}>
-      {/* headerBackButtonDisplayMode: 뒤로가기에서 이전 화면 이름 텍스트를 빼고 < 화살표만 */}
-      <Stack screenOptions={{ headerBackButtonDisplayMode: 'minimal' }} />
-    </GestureHandlerRootView>
+    <>
+      {/* 시스템 "동작 줄이기(Reduce Motion)"를 앱 전체에서 무력화한다. 이 앱의 애니메이션은
+          장식이 아니라 피드백 그 자체다(작은 반응 연출뿐 — 큰 화면 전환·확대 이동 없음).
+          실기기 QA에서 Reduce Motion이 켜진 테스터 폰은 호랑이 터치 반응과 자랑하기
+          로켓 축포가 전부 최종값으로 즉시 점프해 "아무 일도 안 일어나는" 것처럼 보였다
+          (2026-08-22). */}
+      <ReducedMotionConfig mode={ReduceMotion.Never} />
+      {body}
+    </>
   );
 }
 

@@ -202,16 +202,22 @@ export default function BragScreen() {
             {/* 캡처 대상: 흰 배경 카드 묶음 */}
             <View ref={cardRef} collapsable={false} style={styles.card}>
               <View style={styles.cardHeader}>
-                <Text style={styles.cardHeaderTitle}>{/*🐯 */}호랑잉글리시 자랑하기 리포트</Text>
-                <Text style={styles.cardHeaderPeriod}>{periodLabel}</Text>
+                <Text style={styles.cardHeaderTitle} allowFontScaling={false}>
+                  {/*🐯 */}호랑잉글리시 자랑하기 리포트
+                </Text>
+                <Text style={styles.cardHeaderPeriod} allowFontScaling={false}>
+                  {periodLabel}
+                </Text>
               </View>
 
               {!hasAnyBrag ? (
                 <View style={styles.emptyBlock}>
                   {/* 자랑거리가 없을 때만 보이는 화면 — 공유가 막혀 있어 부모에게 갈 일이
                       없는 아이 전용 영역이라 카드 안쪽과 달리 격려하는 톤으로 쓴다. */}
-                  <Text style={styles.emptyText}>아직 발사할 자랑이 없어요 🚀</Text>
-                  <Text style={styles.emptySubText}>
+                  <Text style={styles.emptyText} allowFontScaling={false}>
+                    아직 발사할 자랑이 없어요 🚀
+                  </Text>
+                  <Text style={styles.emptySubText} allowFontScaling={false}>
                     단어장을 훑고 테스트를 보면 자랑거리가 차곡차곡 쌓입니다.
                   </Text>
                 </View>
@@ -221,16 +227,20 @@ export default function BragScreen() {
                   {report.memorizedNow > 0 && (
                     <View style={styles.hero}>
                       <View style={styles.heroHead}>
-                        <Text style={styles.heroTitle}>🧠 암기 자산 곡선</Text>
+                        <Text style={styles.heroTitle} allowFontScaling={false}>
+                          🧠 암기 자산 곡선
+                        </Text>
                         {report.memorizedDelta > 0 && (
-                          <Text style={styles.deltaUp}>이번 주 +{report.memorizedDelta}</Text>
+                          <Text style={styles.deltaUp} allowFontScaling={false}>
+                            이번 주 +{report.memorizedDelta}
+                          </Text>
                         )}
                       </View>
                       <AssetCurveChart
                         points={report.memorizedTrend.slice(-CARD_TREND_DAYS)}
                         valueOf={(p) => p.correctCount}
                       />
-                      <Text style={styles.heroCaption}>
+                      <Text style={styles.heroCaption} allowFontScaling={false}>
                         장기기억에 저장된 단어 — 최근 테스트에서 정답으로 확인된 단어
                       </Text>
                     </View>
@@ -240,13 +250,13 @@ export default function BragScreen() {
                   <View style={styles.grid}>
                     {tiles.map((t) => (
                       <View key={t.key} style={styles.tile}>
-                        <Text style={styles.tileLabel} numberOfLines={1}>
+                        <Text style={styles.tileLabel} numberOfLines={1} allowFontScaling={false}>
                           {t.emoji} {t.label}
                         </Text>
-                        <Text style={styles.tileValue} numberOfLines={1}>
+                        <Text style={styles.tileValue} numberOfLines={1} allowFontScaling={false}>
                           {t.value}
                         </Text>
-                        <Text style={styles.tileSub} numberOfLines={1}>
+                        <Text style={styles.tileSub} numberOfLines={1} allowFontScaling={false}>
                           {t.sub}
                         </Text>
                       </View>
@@ -265,11 +275,13 @@ export default function BragScreen() {
                 ]}
               >
                 {report.unpaidTotal > 0 && (
-                  <Text style={styles.footerUnpaid}>
+                  <Text style={styles.footerUnpaid} allowFontScaling={false}>
                     💌 미지급 {report.unpaidTotal.toLocaleString()}원 · {report.unpaidCount}건
                   </Text>
                 )}
-                <Text style={styles.stamp}>🐯 호랑잉글리시 인증</Text>
+                <Text style={styles.stamp} allowFontScaling={false}>
+                  🐯 호랑잉글리시 인증
+                </Text>
               </View>
             </View>
 

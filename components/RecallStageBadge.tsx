@@ -23,7 +23,8 @@ function RecallStageBadgeImpl({ stage }: RecallStageBadgeProps) {
 
   return (
     <View style={[styles.badge, { backgroundColor: color }]}>
-      <Text style={styles.badgeText}>{stage}</Text>
+      {/* 배지 높이가 22로 고정이라 배율 상한을 건다(DayWordRow와 동일 기준). */}
+      <Text maxFontSizeMultiplier={1.2} style={styles.badgeText}>{stage}</Text>
     </View>
   );
 }

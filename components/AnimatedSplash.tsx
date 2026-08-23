@@ -1,7 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Image, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
-import { HANDWRITING_FONT, handwritingLineHeight, handwritingTop } from '../lib/fonts';
+import {
+  HANDWRITING_FONT,
+  HANDWRITING_TUNED_SCALE,
+  handwritingLineHeight,
+  handwritingTop,
+} from '../lib/fonts';
 import NotebookBackground, { LINE_HEIGHT } from './home/NotebookBackground';
 
 /**
@@ -65,7 +70,12 @@ const FRAME_MS = 130;
  *  넣으면 코드가 그린 글자와 위치가 어긋나 전환 중 두 겹으로 보인다.)
  */
 const TITLE = '호랑잉글리시';
-const TITLE_FONT_SIZE = 26;
+// 2026-08-23에 옛 값 26(pt)에 1.235를 곱해 반올림한 32로 교체 — 경위는 lib/fonts.ts의
+// `HANDWRITING_TUNED_SCALE` 주석. 이 값만 바꾸면 아래 `titleInkCenterY`·`handwritingTop`·
+// `lineHeight`와 줄 격자(`lineOffset`)가 전부 따라온다.
+// **TITLE_GAP은 함께 키우지 않았다** — 글자 크기가 아니라 레이아웃 간격이고, 튜닝 당시에도
+// OS 텍스트 크기 배율의 영향을 받지 않던 값이다.
+const TITLE_FONT_SIZE = 32 * HANDWRITING_TUNED_SCALE;
 /**
  * ★ 세로 위치 조정 손잡이 — 호랑이 아래끝에서 글자가 앉을 줄까지의 거리(pt).
  * **아무 숫자나 넣어도 된다.** 줄 격자가 이 값을 따라오므로(아래 `lineOffset`)
@@ -124,6 +134,8 @@ export default function AnimatedSplash() {
         ))}
 
         <Text
+          // 절대좌표 배치라 OS 텍스트 크기 배율이 들어오면 top과 fontSize의 관계가 깨진다.
+          allowFontScaling={false}
           style={[
             styles.title,
             {

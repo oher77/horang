@@ -16,7 +16,12 @@ import Animated, {
 
 import * as Haptics from 'expo-haptics';
 
-import { HANDWRITING_FONT, handwritingLineHeight, handwritingTop } from '../../lib/fonts';
+import {
+  HANDWRITING_FONT,
+  HANDWRITING_TUNED_SCALE,
+  handwritingLineHeight,
+  handwritingTop,
+} from '../../lib/fonts';
 import { playTigerSound, type TigerSound } from '../../lib/tigerSounds';
 import { useTigerGestures, type TigerEvent } from './useTigerGestures';
 
@@ -119,10 +124,18 @@ const BUBBLE_AREA = {
  * 폰트 지표 보정은 `lib/fonts.ts`의 `handwritingTop()`이 처리한다 —
  * 여기에는 보정값을 섞지 말 것. 폰트를 바꿔도 이 값은 그대로 둔다.
  */
+/*
+ * fontSize는 2026-08-23에 옛 값(87 / 233 / 87)에 1.235를 곱해 반올림한 값으로 교체했다 —
+ * 경위는 lib/fonts.ts의 `HANDWRITING_TUNED_SCALE` 주석 참조. 지금 값이 곧 최종 크기다.
+ * centerY는 크기를 키울 때 함께 건드리지 않았다 — 글자는 그 중심을 기준으로 커진다.
+ *
+ * 단 **날짜 줄의 centerY만 125 → 135**로 내렸다(2026-08-23 실기기 튜닝). 글자가 커지면서
+ * 시안 실측 위치 그대로는 위 세 줄 간격이 답답해 보였다. DAY N(280)·단어 수(435)는 그대로.
+ */
 const BUBBLE_LINES = {
-  date: { centerY: 125, fontSize: 87 },
-  day: { centerY: 280, fontSize: 233 },
-  words: { centerY: 435, fontSize: 87 },
+  date: { centerY: 135, fontSize: 107 * HANDWRITING_TUNED_SCALE },
+  day: { centerY: 280, fontSize: 288 * HANDWRITING_TUNED_SCALE },
+  words: { centerY: 435, fontSize: 107 * HANDWRITING_TUNED_SCALE },
 } as const;
 
 const WEEKDAY_LABELS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -523,6 +536,13 @@ export default function TigerHero({
         blinkTimerRef.current = null;
         if (busyTimerRef.current) clearTimeout(busyTimerRef.current);
         busyTimerRef.current = null;
+        // 타이머만 지우고 플래그를 되돌리지 않으면, 연출 재생 중(eventBusyRef=true) 화면을
+        // 벗어났을 때 복귀 후에도 플래그가 true로 굳어 제스처 4종·깜박임이 영구히 멈춘다.
+        // 깜박이는 도중(BLINK_DURATION_MS 110ms)에 벗어나면 눈이 감긴 채로도 굳으므로
+        // eyeShutOpacity도 함께 되돌린다.
+        eventBusyRef.current = false;
+        isPettingRef.current = false;
+        eyeShutOpacity.value = 0;
       };
     }, [scheduleNextBlink]),
   );
@@ -550,6 +570,13 @@ export default function TigerHero({
       }
       return () => {
         cancelAnimation(breathTranslateY);
+        // ★ 중립(0)으로 되돌려야 한다. withTiming은 **현재값에서** 목표값까지 가는데,
+        //   하필 값이 -amplitude(맨 위) 근처에서 멈춘 채 화면을 벗어나면 다음 복귀 때
+        //   `-amplitude → -amplitude`가 되어 진폭 0 = 숨쉬기가 아예 멈춘다.
+        //   멈춘 지점이 어디였냐에 따라 복귀 후 진폭이 들쭉날쭉해지는 것도 같은 이유다
+        //   (2026-08-22 실기기: 단어장 다녀오면 숨쉬기가 멈춤).
+        //   화면을 벗어난 뒤에 되돌리므로 제자리로 돌아가는 모습은 보이지 않는다.
+        breathTranslateY.value = 0;
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [renderedWidth]),
@@ -607,6 +634,8 @@ export default function TigerHero({
         />
       </GestureDetector>
 
+      {/* 순수 터치 영역 — 자식 없음. 위치는 애니메이션과 무관하게 고정(§2 "터치 영역은
+          머리를 따라 움직이지 않게" 원칙과 동일하게 말풍선도 정적으로 유지). */}
       <Pressable
         style={[
           styles.touchArea,
@@ -619,6 +648,24 @@ export default function TigerHero({
           },
         ]}
         onPress={onEnterWordbook}
+      />
+
+      {/* 말풍선 글자 — Pressable과 같은 위치/크기지만 breathStyle(숨쉬기)을 태워 그림과
+          함께 움직인다. pointerEvents="none"이라 탭은 위 Pressable이 그대로 받고,
+          Pressable보다 뒤에 렌더해야 글자가 그 위에 보인다. */}
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.touchArea,
+          styles.bubbleTouchArea,
+          {
+            left: `${BUBBLE_AREA.left * 100}%`,
+            top: `${BUBBLE_AREA.top * 100}%`,
+            width: `${BUBBLE_AREA.width * 100}%`,
+            height: `${BUBBLE_AREA.height * 100}%`,
+          },
+          breathStyle,
+        ]}
       >
         {/* 말풍선 안쪽 텍스트 — 시안 순서(날짜 → DAY → 단어 수)와 실측 위치. BUBBLE_LINES 참조 */}
         {(['date', 'day', 'words'] as const).map((key) => {
@@ -632,6 +679,8 @@ export default function TigerHero({
           return (
             <Text
               key={key}
+              // 절대좌표 배치라 OS 텍스트 크기 배율이 들어오면 top과 fontSize의 관계가 깨진다.
+              allowFontScaling={false}
               style={[
                 styles.bubbleLine,
                 {
@@ -645,7 +694,7 @@ export default function TigerHero({
             </Text>
           );
         })}
-      </Pressable>
+      </Animated.View>
     </View>
   );
 }

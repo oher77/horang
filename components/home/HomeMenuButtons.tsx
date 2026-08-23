@@ -2,7 +2,12 @@ import { router, type Href } from 'expo-router';
 import { Fragment } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { HANDWRITING_FONT, handwritingLineHeight, handwritingTop } from '../../lib/fonts';
+import {
+  HANDWRITING_FONT,
+  HANDWRITING_TUNED_SCALE,
+  handwritingLineHeight,
+  handwritingTop,
+} from '../../lib/fonts';
 import { place, PLACE, type Placement } from './mockupLayout';
 
 /**
@@ -55,9 +60,11 @@ const ITEMS: MenuItem[] = [
     source: require('../../assets/images/btn-review.png'),
     at: PLACE.review,
     route: '/review',
-    label: { text: '복습', fontSize: 150, centerX: 425, centerY: 119 },
+    label: { text: '복습', fontSize: 185 * HANDWRITING_TUNED_SCALE, centerX: 425, centerY: 119 },
     // 글자 크기 비율(2026-08-14 사용자 지정): 복습 : 발음체크 : 테스트 = 90 : 80 : 100.
-    // 복습 150을 기준(=90)으로 환산 → 발음체크 133, 테스트 167.
+    // 옛 값 150 / 133 / 167에 1.235를 곱해 반올림한 것이 지금의 185 / 164 / 206이다
+    // (경위는 lib/fonts.ts의 `HANDWRITING_TUNED_SCALE` 주석). 비율은 그대로 보존된다.
+    // **centerX/centerY는 시안 실측 위치라 함께 키우지 않았다.**
   },
   {
     key: 'pronunciation',
@@ -65,7 +72,7 @@ const ITEMS: MenuItem[] = [
     at: PLACE.pronunciation,
     route: '/pronunciation',
     // 오른쪽에 개구리가 있어 글자가 왼쪽으로 치우쳐 있다.
-    label: { text: '발음체크', fontSize: 133, centerX: 334, centerY: 137 },
+    label: { text: '발음체크', fontSize: 164 * HANDWRITING_TUNED_SCALE, centerX: 334, centerY: 137 },
   },
   {
     key: 'test',
@@ -73,7 +80,7 @@ const ITEMS: MenuItem[] = [
     at: PLACE.test,
     route: '/test',
     // 오른쪽에 호랑이가 있어 글자가 왼쪽으로 치우쳐 있다.
-    label: { text: '테스트', fontSize: 167, centerX: 346, centerY: 133 },
+    label: { text: '테스트', fontSize: 206 * HANDWRITING_TUNED_SCALE, centerX: 346, centerY: 133 },
   },
   {
     key: 'achievements',
@@ -104,6 +111,8 @@ export default function HomeMenuButtons({ scale }: { scale: number }) {
 
             {item.label && (
               <Text
+                // 절대좌표 배치라 OS 텍스트 크기 배율이 들어오면 top과 fontSize의 관계가 깨진다.
+                allowFontScaling={false}
                 style={[
                   styles.label,
                   {

@@ -1,6 +1,11 @@
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { HANDWRITING_FONT, handwritingLineHeight, handwritingTop } from '../../lib/fonts';
+import {
+  HANDWRITING_FONT,
+  HANDWRITING_TUNED_SCALE,
+  handwritingLineHeight,
+  handwritingTop,
+} from '../../lib/fonts';
 
 /**
  * 잔디 게이지 (design/홈화면-에셋-가이드.md §1).
@@ -70,7 +75,8 @@ const HIT = { top: 195, bottom: 460, halfWidth: 75 };
  * (`mockupLayout.ts`)은 크기가 고정된 에셋에 성립하는 것이고, 가변 길이 텍스트에는
  * 성립하지 않는다. 6개월 완주가 목표라 세 자리 스트릭은 실제로 나오는 값이다.
  *
- * **세로는 각자 실측값을 유지한다** — 불꽃이 글자보다 32px 높이 앉는 게 시안이다.
+ * **세로는 각자 실측값을 유지한다** — 불꽃이 글자보다 조금 높이 앉는 게 시안이다
+ * (차이는 2026-08-23 폰트 크기 조정 후 32px → 12px = STREAK_TEXT 512 − FIRE 500).
  *
  * **이모지와 글자를 한 `<Text>`에 넣지 않는다** (2026-08-14): 이모지는 이 폰트에 없어서
  * Apple Color Emoji로 대체되는데, 그 폰트의 ascent가 훨씬 커서 줄 전체를 밀어내린다.
@@ -97,14 +103,27 @@ const STREAK_GROUP = {
 };
 /** centerY는 시안에서 잰 **글자 잉크의 세로 중심**. 폰트 보정은 `handwritingTop()`이 한다.
  *  fontSize 87 = 사용자 지정 비율("N일 연속" 52, 복습 150/비율 90 기준 환산). */
-const STREAK_TEXT = { centerY: 512, fontSize: 87 };
+const STREAK_TEXT = { centerY: 512, fontSize: 107 * HANDWRITING_TUNED_SCALE };
 /**
  * 불꽃 — 시안 실측 y 448~557. 이모지는 폰트 지표를 믿을 수 없어 박스 높이 안에서 중앙 정렬만 하고,
  * 어긋난 만큼 실기기 측정으로 뺀다.
  * 2026-08-14 측정: 크기는 정확히 맞았고(폭 90) **세로만 22px 낮아** centerY를 502 → 480.
  * 가로 위치(옛 centerX 329)는 2026-08-15 row 정렬로 바뀌면서 `STREAK_GROUP`이 대신한다.
  */
-const FIRE = { centerY: 480, fontSize: 95 };
+// 두 fontSize는 2026-08-23에 옛 값(87 / 95)에 1.235를 곱해 반올림한 값으로 교체했다 —
+// 경위는 lib/fonts.ts의 `HANDWRITING_TUNED_SCALE` 주석. 불꽃은 top·height·lineHeight가
+// 전부 이 fontSize에서 파생돼 박스 중앙이 항상 centerY이므로, 크기만 커지고 중심은 유지된다.
+//
+// **불꽃 centerY 480 → 500** (2026-08-23, 실기기에서 눈으로 맞춘 값).
+// 같은 날 `glyphCenterEm`을 0.65로 내려 "N일 연속" 글자가 아래로 이동했고, 불꽃은
+// `glyphCenterEm`을 쓰지 않아(자체 박스 중앙 정렬) 혼자 제자리에 남아 짝이 틀어졌다.
+// ☞ **계산으로는 483이 나왔는데 실제로 맞은 값은 500이다.** 17px 차이 — 위 주석대로
+//    이모지는 폰트 지표를 믿을 수 없다는 게 다시 확인된 셈이다.
+//    **이 값을 계산값으로 "고치지 말 것."** 눈으로 맞추는 종류의 숫자다.
+// ☞ 글자와 불꽃은 위치 계산 방식이 달라 **자동으로 같이 움직이지 않는다.**
+//    `glyphCenterEm`이나 fontSize를 또 건드리면 이 값도 실기기에서 다시 맞춰야 한다.
+//    미세조정 단위: 1 디자인 px = 아이폰 15에서 정확히 1 네이티브 px(0.33pt).
+const FIRE = { centerY: 500, fontSize: 117 * HANDWRITING_TUNED_SCALE };
 
 export default function GrassGauge({
   slots,
@@ -198,6 +217,8 @@ export default function GrassGauge({
         {/* 불꽃 — 폭을 지정하지 않아 글리프 폭 그대로 잡힌다(간격 계산이 예측 가능해진다).
             높이/lineHeight를 fontSize의 2배로 잡아 그 안에서 세로 중앙 정렬만 시킨다. */}
         <Text
+          // 절대좌표 배치라 OS 텍스트 크기 배율이 들어오면 top과 fontSize의 관계가 깨진다.
+          allowFontScaling={false}
           style={[
             styles.fire,
             {
@@ -212,6 +233,8 @@ export default function GrassGauge({
         </Text>
 
         <Text
+          // 절대좌표 배치라 OS 텍스트 크기 배율이 들어오면 top과 fontSize의 관계가 깨진다.
+          allowFontScaling={false}
           style={[
             styles.streakText,
             {
