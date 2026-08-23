@@ -185,12 +185,16 @@ TestFlight → Builds → 해당 빌드 선택 → **What to Test**
 
 ## 8. 이번 단계의 완료 조건
 
-- [ ] GitHub Pages 두 주소가 열린다
-- [ ] App Privacy = Data Not Collected 게시됨
-- [ ] Test Information 4칸 입력됨 (설명·이메일·방침 URL·마케팅 URL)
-- [ ] Beta App Review Information 입력됨
-- [ ] 외부 그룹 생성 + 빌드 할당 + 심사 통과
+- [x] GitHub Pages 두 주소가 열린다
+- [x] App Privacy = Data Not Collected 게시됨
+- [x] Test Information 4칸 입력됨 (설명·이메일·방침 URL·마케팅 URL)
+- [x] Beta App Review Information 입력됨
+- [x] 외부 그룹 생성 + 빌드 할당 + 심사 통과 — 빌드 4, Public Link, 테스터 2명 (2026-08-23)
+- [ ] **빌드 5 업로드** — 빌드 4에는 iOS 접근성 설정 결함이 남아 있다(동작 줄이기 켜면 호랑이
+      반응·로켓 축포가 안 보이고, 텍스트 크기를 바꾸면 홈 글자가 어긋남. 커밋 `9ddc856`에서 수정).
+      **이 빌드가 올라가기 전에는 테스터에게 피드백을 요청하지 않는다.**
 - [ ] 외부 테스터 최소 3~5명이 실제로 설치해서 홈 화면 첫인상 피드백을 보내옴
+      ⚠️ **첫인상은 사람당 1회뿐이다** — 한꺼번에 다 부르지 말고 몇 명 남겨둘 것
 - [ ] 피드백을 반영할지 판단 → 반영하면 새 빌드, 아니면 3단계(공개 출시)로
 
 ---
