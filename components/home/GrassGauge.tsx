@@ -142,6 +142,13 @@ const FIRE = { centerY: 500, fontSize: 117 * HANDWRITING_TUNED_SCALE };
 /**
  * 'partial' 상태 — "형광등이 나가기 직전" 지지직 깜박임 (설계.md §7.6 미결 4).
  *
+ * ★ **깜박이는 것은 "지금 열린 슬롯"뿐이다** (2026-08-25 실기기 확인 후 사용자 결정).
+ *   지나간 시간대의 미완성 슬롯은 깜박이지 않고 0.5 밝기로 가만히 있는다.
+ *   깜박임의 기능은 **"지금 빨리 끝내주세요"라는 재촉**인데, 이미 지나간 시간대에는
+ *   학생이 할 수 있는 게 없다 — 재촉이 아니라 잔소리가 되고 신경만 쓰인다.
+ *   (미래 슬롯은 애초에 partial이 될 수 없다. 조각은 기록되는 순간의 슬롯에 귀속되므로
+ *    partial인 슬롯은 언제나 "지금 열린 것" 아니면 "지나간 것" 둘 중 하나다.)
+ *
  * 기준 밝기 0.5에서 위아래로 불규칙하게 오르내린다. 균등한 사인파 호흡처럼 보이면
  * 실패 — **짧고 불규칙한 지지직 구간 몇 개 + 긴 정체 구간 하나**로 만든다.
  *
@@ -176,11 +183,25 @@ const PARTIAL_INDEX_STAGGER_MS = 550;
 /** 켜진 전구 글로우 한 칸. 상태별 opacity를 계산만 하고 훅은 무조건 호출한다
  *  (`.map()` 안에서 조건부로 훅을 호출하면 React 규칙 위반 — 슬롯 상태가 바뀔 때
  *  훅 순서가 깨진다). */
-function BulbGlow({ state, index, scale }: { state: SlotState; index: number; scale: number }) {
+function BulbGlow({
+  state,
+  index,
+  scale,
+  isActiveSlot,
+}: {
+  state: SlotState;
+  index: number;
+  scale: number;
+  /** 지금 열려 있는 시간대인가. partial이어도 이게 false면 깜박이지 않는다(위 상수부 주석 참조). */
+  isActiveSlot: boolean;
+}) {
   const opacity = useSharedValue(state === 'full' ? 1 : PARTIAL_BASE_OPACITY);
 
+  // 깜박임 조건 — partial만으로는 부족하고 "지금 열린 슬롯"이어야 한다.
+  const shouldFlicker = state === 'partial' && isActiveSlot;
+
   useEffect(() => {
-    if (state === 'partial') {
+    if (shouldFlicker) {
       opacity.value = withDelay(
         index * PARTIAL_INDEX_STAGGER_MS,
         withRepeat(
@@ -203,11 +224,12 @@ function BulbGlow({ state, index, scale }: { state: SlotState; index: number; sc
         ),
       );
     } else {
+      // full = 완전 점등 / 지나간 partial = 0.5 고정(깜박임 없음) / empty = 아래서 렌더 안 함.
       cancelAnimation(opacity);
       opacity.value = state === 'full' ? 1 : PARTIAL_BASE_OPACITY;
     }
     return () => cancelAnimation(opacity);
-  }, [state, index, opacity]);
+  }, [shouldFlicker, state, index, opacity]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     opacity: state === 'full' ? 1 : opacity.value,
@@ -279,8 +301,14 @@ export default function GrassGauge({
       />
 
       {/* 켜진 전구 — 세로는 전체 높이 그대로, 좌우로만 옮긴다.
-          3상태(empty/partial/full) 렌더는 BulbGlow가 담당 — 훅을 무조건 호출한다. */}
-      {slots?.map((s, i) => (i < TOTAL_SLOTS ? <BulbGlow key={i} state={s} index={i} scale={scale} /> : null))}
+          3상태(empty/partial/full) 렌더는 BulbGlow가 담당 — 훅을 무조건 호출한다.
+          `activeSlot`은 빨간 점과 **같은 값을 그대로 재사용**한다: 깜박이는 전구와 점이
+          찍힌 전구가 언제나 같은 칸이어야 "지금 여기"라는 신호가 하나로 읽힌다. */}
+      {slots?.map((s, i) =>
+        i < TOTAL_SLOTS ? (
+          <BulbGlow key={i} state={s} index={i} scale={scale} isActiveSlot={i === activeSlot} />
+        ) : null,
+      )}
 
       {/* 윤곽선은 빛 위에 얹어야 켜진 전구도 테두리가 살아난다. */}
       <Image
