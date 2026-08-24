@@ -81,8 +81,18 @@ const HABIT_BONUS_LABELS: Record<string, string> = {
   streak100: '100일 연속 보너스',
 };
 
+/** review_day_{dayId}_s{slotIndex} 형식에서 dayId만 추출한다. 정보 부가 없는 슬롯
+ * 번호는 라벨에 넣지 않는다 — 장부는 이미 시각(created_ms)을 보여준다. */
+const REVIEW_DAY_KIND_RE = /^review_day_(\d+)_s\d+$/;
+
 function habitBonusLabel(kind: HabitBonusRow['kind']): string {
-  if (kind.startsWith('slot_pass_')) return '습관 미션 통과';
+  // slot_pass_*는 2026-08-25부터 "오늘 단어장 조각 통과" 시점에 즉시 지급된다(그 전에는
+  // 슬롯 완성 시점). kind 문자열은 그대로 둬서 과거 행도 같은 라벨로 읽힌다 — 복습 편입
+  // 전에는 "슬롯 통과 == 오늘 단어장 통과"였으므로 지난 기록에도 이 라벨이 맞다.
+  if (kind.startsWith('slot_pass_')) return '오늘 단어장 통과';
+  const reviewMatch = kind.match(REVIEW_DAY_KIND_RE);
+  if (reviewMatch) return `Day${reviewMatch[1]} 복습`;
+  if (kind.startsWith('review_day_')) return '복습 보너스';
   return HABIT_BONUS_LABELS[kind] ?? kind;
 }
 

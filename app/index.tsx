@@ -39,7 +39,12 @@ import {
 import NotebookBackground, { PAPER_COLOR } from '../components/home/NotebookBackground';
 import TigerHero from '../components/home/TigerHero';
 import { epochDayToDateString, todayEpochDay } from '../lib/dates';
-import { currentSlotIndex, getCurrentStreak, getTodaySlots } from '../lib/habitQueries';
+import {
+  currentSlotIndex,
+  getCurrentStreak,
+  getTodaySlotStates,
+  type SlotState,
+} from '../lib/habitQueries';
 import { ensureTodayDay, type DayWithWords } from '../lib/queries';
 
 export default function Index() {
@@ -55,7 +60,7 @@ export default function Index() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [todaySlots, setTodaySlots] = useState<boolean[] | null>(null);
+  const [slotStates, setSlotStates] = useState<SlotState[] | null>(null);
   const [streak, setStreak] = useState(0);
   const [activeSlot, setActiveSlot] = useState<number | null>(null);
 
@@ -73,9 +78,9 @@ export default function Index() {
   }, []);
 
   const loadHabit = useCallback(() => {
-    Promise.all([getTodaySlots(), getCurrentStreak(), currentSlotIndex()])
+    Promise.all([getTodaySlotStates(), getCurrentStreak(), currentSlotIndex()])
       .then(([slots, streakDays, active]) => {
-        setTodaySlots(slots);
+        setSlotStates(slots);
         setStreak(streakDays);
         setActiveSlot(active);
       })
@@ -186,7 +191,7 @@ export default function Index() {
             */}
             <View style={place(PLACE.grass, s)}>
               <GrassGauge
-                slots={todaySlots}
+                slots={slotStates}
                 streak={streak}
                 activeSlot={activeSlot}
                 scale={s}

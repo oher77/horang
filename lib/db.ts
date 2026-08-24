@@ -217,6 +217,22 @@ CREATE TABLE IF NOT EXISTS pron_resolution (
   content_word_id INTEGER PRIMARY KEY,
   resolved_ms     INTEGER NOT NULL
 );
+
+-- 슬롯 조각 로그 (설계.md §7.6 미결 4, 2026-08-24). 슬롯 하나를 채우려면
+-- [오늘 단어장] + [오늘의 복습 대상 Day 전부]가 각각 1행씩 있어야 한다.
+-- 오늘/복습을 구분하는 컬럼이 없는 이유: 둘 다 "그 슬롯에 Day D를 인출했다"는 같은
+-- 사실이고, 어느 쪽인지는 조회 시점에 오늘 Day·복습 대상 집합과 대조해 파생한다.
+-- retrieval_session은 이제 "슬롯 완성"(조각이 전부 모인 순간) 기록이고,
+-- 이 테이블이 그 전 단계의 조각들을 담는다.
+CREATE TABLE IF NOT EXISTS slot_part (
+  id         INTEGER PRIMARY KEY,
+  local_day  INTEGER NOT NULL,
+  slot_index INTEGER NOT NULL,
+  day_id     INTEGER NOT NULL REFERENCES day(id) ON DELETE CASCADE,
+  done_ms    INTEGER NOT NULL,
+  UNIQUE(local_day, slot_index, day_id)
+);
+CREATE INDEX IF NOT EXISTS idx_slot_part_slot ON slot_part(local_day, slot_index);
 `;
 
 /** slot_config 기본 4행 시드값 (설계.md §7.2): (0,6,10)(1,10,15)(2,15,20)(3,20,24). */
@@ -258,12 +274,12 @@ async function ensureUserDb(): Promise<SQLite.SQLiteDatabase> {
   // slot_config 기본 4행 보장 (§7.2)
   await ensureSlotConfig(db);
 
-  // app_meta 스키마 버전 기록 (신규 설치는 '3'으로 seed — '3': pron_resolution 추가)
+  // app_meta 스키마 버전 기록 (신규 설치는 '4'로 seed — '3': pron_resolution 추가, '4': slot_part 추가)
   await db.runAsync(
-    "INSERT OR IGNORE INTO app_meta (key, value) VALUES ('user_schema_version', '3')",
+    "INSERT OR IGNORE INTO app_meta (key, value) VALUES ('user_schema_version', '4')",
   );
   // 기존 설치(구버전)는 INSERT OR IGNORE로 올라가지 않으므로 명시적으로 갱신 (§7.2 마이그레이션 절차 3)
-  await db.runAsync("UPDATE app_meta SET value = '3' WHERE key = 'user_schema_version'");
+  await db.runAsync("UPDATE app_meta SET value = '4' WHERE key = 'user_schema_version'");
 
   return db;
 }

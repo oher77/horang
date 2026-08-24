@@ -1,4 +1,4 @@
-import { Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { AppStateStatus, ViewToken } from 'react-native';
@@ -20,10 +20,10 @@ import DayWordRow, { ROW_HEIGHT } from '../../components/DayWordRow';
 import WordDetailSheet from '../../components/WordDetailSheet';
 import {
   currentSlotIndex,
-  getTodaySlots,
-  getTodaySessionCount,
-  isTodayDay,
-  recordRetrievalSession,
+  getSlotPassedDayIds,
+  getSlotRequirement,
+  getTodayPassCount,
+  recordSlotPart,
 } from '../../lib/habitQueries';
 import {
   getDayIndex,
@@ -40,19 +40,31 @@ import { getWordDetail, type WordDetail } from '../../lib/wordDetail';
 const STAGGER_MS = 15;
 const PEEK_DURATION_MS = 1400;
 
-// 하루 4회 분산 인출 습관 시스템 — 세션 트래킹 상수 (설계.md §7.1, §7.3, 2026-07-09 기준 교체)
-// 세션 완료(= 전구 채우기 = 보상) 체류 임계 — 세션 차수마다 규칙이 다르다.
-// 2026-08-24 딸 실사용 피드백으로 개편. 이전: 첫 세션 단어수 × 5초 / 이후 전부 3초 + 배지수 × 1초.
-// 차수는 오늘 확정된 retrieval_session 행 수로 센다(getTodaySessionCount, 0 = 첫 번째).
-// 1·2번째가 전체 단어수 기준인 이유: 그 시점엔 아직 체크가 덜 돼 있어 전량을 훑어야 한다.
-// 3·4번째가 배지 기준인 이유: 그때는 어려운 단어가 추려져 있어 그것만 다시 인출하면 된다.
-const DWELL_FIRST_MS_PER_WORD = 2500; // 1번째: 전체 단어수 × 2.5초
-const DWELL_SECOND_MS_PER_WORD = 1500; // 2번째: 전체 단어수 × 1.5초
-const DWELL_LATER_MS_PER_BADGE = 2000; // 3·4번째: 체크(배지) 단어수 × 2초
-// 3·4번째 세션의 하한(2026-08-24 사용자 확정). 배지가 0이면 곱셈 결과가 0이라 아래
-// Math.max(1000,...) 안전망에 걸려 1초 만에 통과해 버린다 — 오늘 단어장은 보상이 걸린
-// 화면이라(슬롯 통과 + 4/4 보너스) 스와이프를 안 하는 아이가 3·4번째를 1초씩 넘기게 된다.
-// 그래서 이 분기에만 별도 하한을 둔다. 1·2번째는 전체 단어수 기준이라 0이 될 일이 없다.
+// 하루 4회 분산 인출 습관 시스템 — 세션 트래킹 상수 (설계.md §7.1, §7.3, §7.6 미결 4)
+// 세션 완료(= 조각 하나 채우기 = 보상) 체류 임계 — 오늘 Day인지 복습 Day인지, 그리고
+// 오늘 Day라면 몇 번째 패스인지로 규칙이 갈린다.
+// 2026-08-24 복습이 슬롯 조건에 편입되며 재편. 이전에는 "차수"가 오늘 확정된
+// retrieval_session 행 수(= 오늘 완료한 슬롯 수)였으나, 이제 그 테이블은 슬롯 완성만
+// 기록해 단어장을 훑은 횟수와 안 맞는다. 지금의 "패스 횟수"는 getTodayPassCount(dayId)
+// = 오늘 이 특정 Day를 슬롯에서 통과한 횟수(slot_part 기준)로, "오늘 완료한 슬롯 수"가
+// 아니라 "오늘 이 Day를 훑은 횟수"다 — 원래 의도(체크가 덜 된 초반엔 전량, 어느 정도
+// 훑은 뒤엔 배지만)에 맞는 축은 원래도 이쪽이었다.
+//
+// 갈리는 축은 차수가 아니라 "배지가 이미 의미를 갖느냐"다:
+// - 오늘 Day 1·2번째 패스: 그날 막 나온 단어라 아직 체크가 덜 돼 있어 배지가 정보가
+//   못 된다 → 전체 단어수 기준.
+// - 그 외 전부(오늘 Day 3·4번째 패스 + 복습 Day의 모든 패스): 복습 Day는 며칠에 걸쳐
+//   분류가 끝나 있어 첫 패스부터 배지가 의미 있고, 오늘 Day도 3·4번째쯤엔 마찬가지다
+//   → 체크(배지) 단어수 기준. 다 외운 복습 Day(배지 0)는 하한만 채우고 통과한다
+//   (§7.6 "볼 게 없는 Day를 보상 때문에 붙잡지 않는다"가 이 분기로 지켜진다).
+const DWELL_FIRST_MS_PER_WORD = 2500; // 오늘 Day 1번째 패스: 전체 단어수 × 2.5초
+const DWELL_SECOND_MS_PER_WORD = 1500; // 오늘 Day 2번째 패스: 전체 단어수 × 1.5초
+const DWELL_LATER_MS_PER_BADGE = 2000; // 그 외 전부: 체크(배지) 단어수 × 2초
+// "그 외 전부" 분기의 하한(2026-08-24 사용자 확정). 배지가 0이면 곱셈 결과가 0이라 아래
+// Math.max(1000,...) 안전망에 걸려 1초 만에 통과해 버린다. 오늘 Day 3·4번째는 보상이
+// 걸린 화면이라(슬롯 통과 + 4/4 보너스) 스와이프를 안 하는 아이가 1초씩 넘기게 되고,
+// 복습 Day는 다 외운 Day를 즉시 통과시키되 "0초 통과"라는 티는 안 나게 하려는 취지다.
+// 1·2번째(오늘 Day)는 전체 단어수 기준이라 0이 될 일이 없다.
 const DWELL_LATER_MIN_MS = 3000;
 // 이탈 허용 유예(2026-07-12): 앱이 비활성화됐다가 이 시간 안에 돌아오면 실수/시스템 UI
 // (알림센터 등)로 보고 이어서 세고, 넘기면 임계값 전체로 리셋. AppState 상태명(inactive/
@@ -91,7 +103,8 @@ const COIN_DURATION_MS = 1000; // 동전 등장→상승→소멸 전체 시간
 type ColumnKey = 'word' | 'meaning';
 type StudyMode = 'study' | 'retrieval';
 
-export default function DayScreen() {
+function DayScreenBody() {
+  const router = useRouter();
   const { dayId, dayIndex: dayIndexParam, initialMode } = useLocalSearchParams<{
     dayId: string;
     dayIndex?: string;
@@ -146,11 +159,16 @@ export default function DayScreen() {
   const [visibleIndexes, setVisibleIndexes] = useState<number[]>([]);
   const minVisibleIndexRef = useRef(0);
 
-  // --- 하루 4회 분산 인출 습관 시스템 — 세션 트래킹 (설계.md §7.1, §7.3) ---
-  // 트래킹 적용 여부: 오늘 Day가 아니거나 진입 시점이 데드존(슬롯 없음)이면 비활성.
+  // --- 하루 4회 분산 인출 습관 시스템 — 세션 트래킹 (설계.md §7.1, §7.3, §7.6 미결 4) ---
+  // 트래킹 적용 여부: 이 Day가 오늘의 요구 집합(오늘 Day + 복습 대상)에 없거나 진입
+  // 시점이 데드존(슬롯 없음)이면 비활성.
   const [trackingEnabled, setTrackingEnabled] = useState(false);
   const [sessionRecorded, setSessionRecorded] = useState(false);
   const [completionBanner, setCompletionBanner] = useState<string | null>(null);
+  // 연쇄 복습 버튼용 — 이 슬롯에서 아직 남은 Day id(최근순, todayDayId 포함 가능) 및
+  // 오늘 Day의 id(라벨 분기용). 초기화 effect와 recordSlotPart 결과 양쪽에서 채운다.
+  const [remaining, setRemaining] = useState<number[]>([]);
+  const todayDayIdRef = useRef<number | null>(null);
   // 미션 완료 동전 애니메이션 — 총 지급액만 표시(개별 보너스 내역은 배너 문구로 충분).
   // 세션당 1회 구조(sessionRecorded 잠금)라 큐잉 없이 단순 교체로 충분하다.
   const [coinAmount, setCoinAmount] = useState<number | null>(null);
@@ -176,7 +194,10 @@ export default function DayScreen() {
   // 기존에 스와이프마다 쿼리 4개가 재실행되던 잠복 문제의 수정).
   // ★ 이 가드는 "초기화 성공" 때만 서던 것이라 복습 Day에서는 영원히 서지 않아 같은
   //   재실행이 남아 있었다(2026-08-24 수정). 아래 초기화 effect의 실패 분기 참고 —
-  //   영구 실패(복습 Day)는 가드를 세우고, 일시 실패(데드존)는 세우지 않는다.
+  //   영구 실패(요구 집합 밖의 Day)는 가드를 세우고, 일시 실패(데드존)는 세우지 않는다.
+  //   2026-08-24 재정정: 요구 집합은 getSlotRequirement()가 오늘 날짜와 day.created_day로
+  //   정하므로 화면이 열려 있는 동안 절대 바뀌지 않는다(오늘 Day든 복습 Day든 동일) —
+  //   "복습 Day라서"가 아니라 "요구 집합이 화면 생존 기간 내 불변이라서" 가드를 세운다.
   const trackingInitializedRef = useRef(false);
 
   // 체류 타이머 상태 — "남은 시간만큼 setTimeout" 방식. 이탈(비활성화) 후 복귀가
@@ -216,25 +237,26 @@ export default function DayScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dayId]);
 
-  // 세션 트래킹 초기화 — 오늘 Day + 데드존 아님(currentSlotIndex != null) 확인 후에만 활성화.
-  // words가 로드돼야 체류 임계값(단어수 기반)을 계산할 수 있으므로 words 로드와 별도 effect.
-  // trackingInitializedRef 가드로 초기화는 세션당 정확히 1회만 수행된다(위 ref 선언부 주석 참고).
+  // 세션 트래킹 초기화 — 이 Day가 오늘 요구 집합에 있고 + 데드존 아님(currentSlotIndex
+  // != null) 확인 후에만 활성화. words가 로드돼야 체류 임계값(단어수 기반)을 계산할 수
+  // 있으므로 words 로드와 별도 effect. trackingInitializedRef 가드로 초기화는 세션당
+  // 정확히 1회만 수행된다(위 ref 선언부 주석 참고).
   useEffect(() => {
     const id = Number(dayId);
     if (!Number.isFinite(id) || !words) return;
     if (trackingInitializedRef.current) return;
 
     let cancelled = false;
-    Promise.all([isTodayDay(id), getTodaySessionCount(), currentSlotIndex(), getTodaySlots()]).then(
-      ([todayDay, sessionCount, slotIndex, todaySlots]) => {
+    Promise.all([getSlotRequirement(), getTodayPassCount(id), currentSlotIndex()]).then(
+      ([req, passCount, slotIndex]) => {
         if (cancelled) return;
         // 실패 두 종류를 구분한다(2026-08-24). 전에는 둘을 한 조건으로 묶어 똑같이
         // "가드 없이 return"했는데, 그러면 복습 Day에서 가드가 영원히 안 서서
-        // 스와이프(setWords)마다 위 쿼리 4개가 통째로 재실행됐다.
-        if (!todayDay) {
-          // 복습 Day — 판정 근거가 day.created_day라 화면이 열려 있는 동안 절대 바뀌지
-          // 않는다(자정을 넘겨도 오늘이 될 수 없다). 재시도해도 답이 같으므로 가드를
-          // 세워 재실행을 끊는다.
+        // 스와이프(setWords)마다 위 쿼리들이 통째로 재실행됐다.
+        if (!req.requiredDayIds.includes(id)) {
+          // 오늘 요구 집합 밖의 Day(오늘 Day도 복습 대상도 아님) — 이 집합은
+          // 오늘 날짜와 day.created_day로만 정해지므로 화면이 열려 있는 동안 절대
+          // 바뀌지 않는다. 재시도해도 답이 같으므로 가드를 세워 재실행을 끊는다.
           trackingInitializedRef.current = true;
           return;
         }
@@ -244,26 +266,35 @@ export default function DayScreen() {
           return;
         }
         trackingInitializedRef.current = true;
+        todayDayIdRef.current = req.todayDayId;
 
-        // 미션 임계값(체류 단독, 설계.md §7.1) — 세션 차수별 3분기(상수부 주석 참조).
-        // 배지 수는 이 시점(화면 로드) 1회 계산해 세션 중 스와이프해도 임계는 고정된다.
+        // 미션 임계값(체류 단독, 설계.md §7.1) — 오늘 Day/복습 Day로 규칙이 갈린다
+        // (상수부 주석 참조). 배지 수는 이 시점(화면 로드) 1회 계산해 세션 중 스와이프해도
+        // 임계는 고정된다.
+        const isTodaysDay = req.todayDayId === id;
         const badgeWordCount = words.filter((w) => w.recall_stage > 0).length;
         const thresholdMs = Math.max(
           1000,
-          sessionCount === 0
+          isTodaysDay && passCount === 0
             ? words.length * DWELL_FIRST_MS_PER_WORD
-            : sessionCount === 1
+            : isTodaysDay && passCount === 1
               ? words.length * DWELL_SECOND_MS_PER_WORD
               : Math.max(DWELL_LATER_MIN_MS, badgeWordCount * DWELL_LATER_MS_PER_BADGE),
         );
         dwellThresholdMsRef.current = thresholdMs;
         dwellRemainingMsRef.current = thresholdMs;
 
-        if (todaySlots[slotIndex]) {
-          // 현재 슬롯이 이미 확정됨 — 판정 시도 없이 조용히 잠근다(recordRetrievalSession의
-          // INSERT OR IGNORE도 결국 무시하지만, 헛되이 타이머를 돌릴 필요가 없어 미리 잠근다).
-          setSessionRecorded(true);
-        }
+        getSlotPassedDayIds(slotIndex).then((passedDayIds) => {
+          if (cancelled) return;
+          const passedSet = new Set(passedDayIds);
+          if (passedSet.has(id)) {
+            // 이 슬롯에서 이 Day를 이미 통과함 — 판정 시도 없이 조용히 잠근다
+            // (recordSlotPart의 INSERT OR IGNORE도 결국 무시하지만, 헛되이 타이머를
+            // 돌릴 필요가 없어 미리 잠근다).
+            setSessionRecorded(true);
+          }
+          setRemaining(req.requiredDayIds.filter((d) => !passedSet.has(d)));
+        });
         setTrackingEnabled(true);
       },
     );
@@ -282,10 +313,10 @@ export default function DayScreen() {
     };
   }, []);
 
-  // dayId를 숫자로 안전 변환 (recordRetrievalSession 호출용). 트래킹 로직 전반에서 재사용.
+  // dayId를 숫자로 안전 변환 (recordSlotPart 호출용). 트래킹 로직 전반에서 재사용.
   const dayIdNum = Number(dayId);
 
-  // 조건 충족 시 recordRetrievalSession() 호출 — 순서: isTodayDay/currentSlotIndex 등
+  // 조건 충족 시 recordSlotPart() 호출 — 순서: 요구 집합 판단/currentSlotIndex 등
   // 슬롯 귀속 판단은 lib/habitQueries.ts 내부가 전담하므로 여기서는 호출만 한다.
   const tryFinalizeSession = useCallback(() => {
     if (!trackingEnabled || sessionRecorded) return;
@@ -295,16 +326,44 @@ export default function DayScreen() {
     // 조건 충족 순간 즉시 잠가 중복 호출 방지 (DB round-trip 중 재진입 방지)
     setSessionRecorded(true);
 
-    recordRetrievalSession(dayIdNum)
+    recordSlotPart(dayIdNum)
       .then((result) => {
-        if (!result.recorded) {
-          // 이미 이 슬롯이 찬 상태 등 — 조용히 무시(스펙: recorded=false면 피드백 없음)
+        setRemaining(result.remainingDayIds);
+
+        if (!result.partRecorded) {
+          // 이미 이 슬롯에서 이 Day를 통과한 상태 — 조용히 무시(피드백 없음)
           return;
         }
 
-        // 배너 문구 — 실지급 내역(result.paidBonuses) 기반으로 조립. 이전에는
-        // DEFAULT_HABIT_BONUS 상수 금액을 그대로 찍어 설정에서 금액을 바꾸면 배너가
-        // 틀린 숫자를 보여주는 잠복 버그가 있었다(2026-07-12 수정). 개별 금액은
+        if (!result.slotCompleted) {
+          // 조각만 기록됨(슬롯 미완성) — 남은 개수를 알려주는 짧은 배너.
+          const isTodaysDay = dayIdNum === todayDayIdRef.current;
+          const remainingCount = result.remainingDayIds.length;
+          const banner = isTodaysDay
+            ? `단어장 끝! 복습 ${remainingCount}개 남았어요`
+            : `복습 하나 끝! ${remainingCount}개 남았어요`;
+          setCompletionBanner(banner);
+          setTimeout(() => setCompletionBanner(null), BANNER_DURATION_MS);
+
+          const total = result.paidBonuses.reduce((sum, b) => sum + b.amount, 0);
+          if (total > 0) {
+            if (coinShowTimerRef.current) clearTimeout(coinShowTimerRef.current);
+            if (coinTimerRef.current) clearTimeout(coinTimerRef.current);
+            coinShowTimerRef.current = setTimeout(() => {
+              setCoinAmount(total);
+              coinShowTimerRef.current = null;
+            }, COIN_DELAY_MS);
+            coinTimerRef.current = setTimeout(() => {
+              setCoinAmount(null);
+              coinTimerRef.current = null;
+            }, COIN_DELAY_MS + COIN_DURATION_MS);
+          }
+          return;
+        }
+
+        // 슬롯 완성 — 배너 문구를 실지급 내역(result.paidBonuses) 기반으로 조립.
+        // 이전에는 DEFAULT_HABIT_BONUS 상수 금액을 그대로 찍어 설정에서 금액을 바꾸면
+        // 배너가 틀린 숫자를 보여주는 잠복 버그가 있었다(2026-07-12 수정). 개별 금액은
         // 배너에 쓰지 않는다 — 동전이 총액을 보여주므로 단문 유지.
         const kinds = new Set(result.paidBonuses.map((b) => b.kind));
         const parts = ['이번 슬롯 미션 완료!'];
@@ -577,6 +636,72 @@ export default function DayScreen() {
     setSheetVisible(false);
   }, []);
 
+  // 연쇄 복습 버튼 — remaining은 [오늘 Day, 복습 -1, -3, -7, ...] 순서(getSlotRequirement의
+  // requiredDayIds 순서를 그대로 물려받음)라 자연히 우선순위가 된다. 오늘 단어장이 아직이면
+  // 그게 먼저 나온다 — 의도된 동작(복습만 걸러내지 않는다).
+  const nextDayId = remaining.find((id) => id !== dayIdNum) ?? null;
+  const [nextDayIndex, setNextDayIndex] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (nextDayId === null) {
+      setNextDayIndex(null);
+      return;
+    }
+    let cancelled = false;
+    getDayIndex(nextDayId)
+      .then((idx) => {
+        if (!cancelled) setNextDayIndex(idx);
+      })
+      .catch(() => {
+        // 라벨 표시용이라 실패해도 화면 동작에는 지장 없음
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [nextDayId]);
+
+  const handleGoNext = useCallback(() => {
+    if (nextDayId === null) return;
+    // ★ 목적지가 오늘 단어장이면 initialMode를 넘기지 않는다(= 학습모드).
+    //   remaining 순서상 오늘 Day가 맨 앞이라, 복습 화면에서 시작해 복습을 먼저 끝내면
+    //   이 버튼이 오늘 단어장을 가리키게 된다. 그때 인출모드로 열면 **아직 한 번도 안 본
+    //   오늘의 새 단어 20개가 뜻이 가려진 채 카운트다운과 함께** 나온다 — 인출할 것이
+    //   머릿속에 없는데 인출을 시키는 셈이라 학습이 아니라 좌절이 된다.
+    //   복습 Day는 반대다(며칠 전에 배운 것을 꺼내는 화면) → 인출모드가 맞다.
+    //   이 분기 덕에 "인출모드로 여는 곳은 복습뿐"이라는 기존 규약도 그대로 유지된다.
+    const isNextTodaysDay = nextDayId === todayDayIdRef.current;
+    // push가 아니라 replace — 슬롯 요구 개수만큼 연쇄 이동하므로 push를 쓰면 뒤로가기가
+    // 미로가 된다(최대 7단까지 쌓일 수 있음, §7.6 미결 4).
+    router.replace({
+      pathname: '/day/[dayId]',
+      params: {
+        dayId: String(nextDayId),
+        ...(nextDayIndex !== null ? { dayIndex: String(nextDayIndex) } : {}),
+        ...(isNextTodaysDay ? {} : { initialMode: 'retrieval' }),
+      },
+    });
+  }, [nextDayId, nextDayIndex, router]);
+
+  const nextDayLabel =
+    nextDayId === null
+      ? ''
+      : nextDayId === todayDayIdRef.current
+        ? '오늘 단어장 →'
+        : nextDayIndex !== null
+          ? `Day${nextDayIndex} 복습 →`
+          : '복습 →';
+
+  const showChainButton = sessionRecorded && nextDayId !== null;
+
+  const chainFooter = showChainButton ? (
+    <View style={styles.chainFooter}>
+      <Text style={styles.chainFooterHint}>이번 시간대에 {remaining.length}개 남았어요</Text>
+      <Pressable style={styles.chainButton} onPress={handleGoNext} hitSlop={8}>
+        <Text style={styles.chainButtonText}>{nextDayLabel}</Text>
+      </Pressable>
+    </View>
+  ) : null;
+
   const renderItem = useCallback(
     ({ item, index }: { item: DayWordRowData; index: number }) => {
       const peek = peekMap[item.id];
@@ -678,6 +803,7 @@ export default function DayScreen() {
             maxToRenderPerBatch={8}
             onViewableItemsChanged={onViewableItemsChanged}
             viewabilityConfig={viewabilityConfig}
+            ListFooterComponent={chainFooter}
           />
         </>
       )}
@@ -697,6 +823,14 @@ export default function DayScreen() {
       />
     </View>
   );
+}
+
+export default function DayScreen() {
+  const { dayId } = useLocalSearchParams<{ dayId: string }>();
+  // ★ 연쇄 복습 버튼이 router.replace로 같은 라우트를 갈아끼운다. expo-router는 파라미터만
+  //   바뀌면 리마운트하지 않으므로 이전 Day의 상태(스크롤·가림·카운트다운·체류 타이머·
+  //   트래킹 초기화 가드)를 그대로 물고 간다. key로 강제 리마운트해 매번 새 화면이 되게 한다.
+  return <DayScreenBody key={dayId} />;
 }
 
 // 학습/인출모드 2세그먼트 필 토글 (헤더 우측, 설계.md §4.5). 기본 학습모드.
@@ -967,6 +1101,27 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     textAlign: 'center',
+  },
+  chainFooter: {
+    alignItems: 'center',
+    paddingVertical: 20,
+    paddingHorizontal: 24,
+  },
+  chainFooterHint: {
+    fontSize: 13,
+    color: '#888',
+    marginBottom: 8,
+  },
+  chainButton: {
+    backgroundColor: '#ff9f43',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+  },
+  chainButtonText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
   },
   coinWrap: {
     position: 'absolute',

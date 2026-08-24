@@ -1,4 +1,15 @@
+import { useEffect } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import Animated, {
+  cancelAnimation,
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withRepeat,
+  withSequence,
+  withTiming,
+} from 'react-native-reanimated';
 
 import {
   HANDWRITING_FONT,
@@ -6,6 +17,7 @@ import {
   handwritingLineHeight,
   handwritingTop,
 } from '../../lib/fonts';
+import type { SlotState } from '../../lib/habitQueries';
 
 /**
  * 잔디 게이지 (design/홈화면-에셋-가이드.md §1).
@@ -13,7 +25,9 @@ import {
  * ── 3층 스택, 좌우 이동 한 번 말고는 좌표 계산이 없다 ──────────────────────
  *
  *   grass-box.png (928 × 619)   배경 + 꺼진 전구 4개(반투명 검정 워시)
- *     ├ bulb-glow.png × 완료 슬롯   272 × 619 — **세로는 전체 높이라 x만 옮긴다**
+ *     ├ bulb-glow.png × 불 켜진 슬롯 272 × 619 — **세로는 전체 높이라 x만 옮긴다**
+ *     │   슬롯은 3상태다(§7.6 미결 4): full=완전 점등 / partial=지지직 깜박임 /
+ *     │   empty=글로우 없음. 렌더는 아래 `BulbGlow`가 담당한다.
  *     ├ bulbs.png (928 × 619)       전구 윤곽선 4개. **(0,0)에 겹치기만**
  *     ├ 빨간 점 (코드)               현재 열린 슬롯 위
  *     └ 🔥 N일 연속 (코드)           전구 아래
@@ -125,6 +139,100 @@ const STREAK_TEXT = { centerY: 512, fontSize: 107 * HANDWRITING_TUNED_SCALE };
 //    미세조정 단위: 1 디자인 px = 아이폰 15에서 정확히 1 네이티브 px(0.33pt).
 const FIRE = { centerY: 500, fontSize: 117 * HANDWRITING_TUNED_SCALE };
 
+/**
+ * 'partial' 상태 — "형광등이 나가기 직전" 지지직 깜박임 (설계.md §7.6 미결 4).
+ *
+ * 기준 밝기 0.5에서 위아래로 불규칙하게 오르내린다. 균등한 사인파 호흡처럼 보이면
+ * 실패 — **짧고 불규칙한 지지직 구간 몇 개 + 긴 정체 구간 하나**로 만든다.
+ *
+ * `withRepeat(withSequence(...), -1, false)`를 쓰되 **시퀀스의 마지막 opacity가
+ * 첫 opacity와 같아야 한다** — 안 그러면 매 주기 경계에서 값이 "툭" 튄다
+ * (2026-08-14 숨쉬기 애니메이션에서 실제로 겪은 함정, CLAUDE.md §8 참조).
+ * 아래 시퀀스는 BASE(0.5)에서 시작해 지지직거리다 BASE로 돌아온다.
+ */
+const PARTIAL_BASE_OPACITY = 0.5;
+const PARTIAL_LOW_OPACITY = 0.15;
+const PARTIAL_HIGH_OPACITY = 0.62;
+/**
+ * 지지직 한 번 치고 나서 조용히 머무는 시간 — **깜박임 간격을 조절하는 손잡이는 여기 하나뿐.**
+ *
+ * 눈에 보이는 멈춤 = 이 값 + 마지막 복귀 램프 200ms. 지금은 약 2.2초다.
+ * (2026-08-25 사용자 조정: 520 → 2800 → **2000**. 520은 0.7초라 쉴 새 없이 깜박이는
+ *  느낌이었고, 2800은 3초로 너무 뜸했다.)
+ * 값을 키우면 "가끔 한 번씩 지지직"에 가까워지고, 줄이면 "고장 나기 직전"에 가까워진다.
+ *
+ * 깜박임 자체(LOW로 세 번 떨어지는 부분)는 총 440ms이고 이 값과 무관하다 — 개수·리듬을
+ * 바꾸려면 아래 시퀀스의 duration을 직접 건드려야 한다.
+ */
+const PARTIAL_HOLD_MS = 2000;
+/**
+ * 슬롯마다 시작 위상을 어긋나게 해 4개가 동시에 깜박이지 않게 한다.
+ * **한 주기가 길어지면(PARTIAL_HOLD_MS ↑) 이 값도 같이 키워야 4개가 고르게 흩어진다.**
+ * 220 → **550** (2026-08-25 사용자 조정, HOLD를 늘리면서 함께 벌렸다). 주기가 2.64초이므로
+ * 550 × 4 = 2.2초에 걸쳐 네 전구가 차례로 지지직거린다 — 한꺼번에 깜박이지 않는다.
+ */
+const PARTIAL_INDEX_STAGGER_MS = 550;
+
+/** 켜진 전구 글로우 한 칸. 상태별 opacity를 계산만 하고 훅은 무조건 호출한다
+ *  (`.map()` 안에서 조건부로 훅을 호출하면 React 규칙 위반 — 슬롯 상태가 바뀔 때
+ *  훅 순서가 깨진다). */
+function BulbGlow({ state, index, scale }: { state: SlotState; index: number; scale: number }) {
+  const opacity = useSharedValue(state === 'full' ? 1 : PARTIAL_BASE_OPACITY);
+
+  useEffect(() => {
+    if (state === 'partial') {
+      opacity.value = withDelay(
+        index * PARTIAL_INDEX_STAGGER_MS,
+        withRepeat(
+          withSequence(
+            // 긴 정체 구간 — 기준 밝기에서 머문다. 이미 BASE에 있으므로 실질적으로 "대기"다.
+            withTiming(PARTIAL_BASE_OPACITY, { duration: PARTIAL_HOLD_MS, easing: Easing.linear }),
+            // 지지직 1 — 순간적으로 확 꺼졌다 올라온다.
+            withTiming(PARTIAL_LOW_OPACITY, { duration: 60, easing: Easing.linear }),
+            withTiming(PARTIAL_HIGH_OPACITY, { duration: 90, easing: Easing.linear }),
+            withTiming(PARTIAL_LOW_OPACITY, { duration: 50, easing: Easing.linear }),
+            // 지지직 2 — 짧게 한 번 더, 다른 리듬으로.
+            withTiming(PARTIAL_HIGH_OPACITY, { duration: 120, easing: Easing.linear }),
+            withTiming(PARTIAL_BASE_OPACITY, { duration: 80, easing: Easing.linear }),
+            withTiming(PARTIAL_LOW_OPACITY, { duration: 40, easing: Easing.linear }),
+            // 기준으로 복귀 — 다음 주기 시작값(BASE)과 반드시 같아야 이음새가 안 튄다.
+            withTiming(PARTIAL_BASE_OPACITY, { duration: 200, easing: Easing.linear }),
+          ),
+          -1,
+          false,
+        ),
+      );
+    } else {
+      cancelAnimation(opacity);
+      opacity.value = state === 'full' ? 1 : PARTIAL_BASE_OPACITY;
+    }
+    return () => cancelAnimation(opacity);
+  }, [state, index, opacity]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    opacity: state === 'full' ? 1 : opacity.value,
+  }));
+
+  if (state === 'empty') return null;
+
+  return (
+    <Animated.Image
+      source={require('../../assets/images/bulb-glow.png')}
+      style={[
+        {
+          position: 'absolute',
+          left: (BULB_CENTERS_X[index] - GLOW_CORE_CX) * scale,
+          top: 0,
+          width: GLOW_WIDTH * scale,
+          height: GLOW_HEIGHT * scale,
+        },
+        animatedStyle,
+      ]}
+      resizeMode="contain"
+    />
+  );
+}
+
 export default function GrassGauge({
   slots,
   streak,
@@ -132,7 +240,7 @@ export default function GrassGauge({
   scale,
   onPressActiveSlot,
 }: {
-  slots: boolean[] | null;
+  slots: SlotState[] | null;
   streak: number;
   activeSlot: number | null;
   /** 시안 px → 화면 px 배율. grass-box도 시안에서 1:1로 잘렸으므로 같은 배율이 그대로 통한다. */
@@ -170,23 +278,9 @@ export default function GrassGauge({
         resizeMode="contain"
       />
 
-      {/* 켜진 전구 — 세로는 전체 높이 그대로, 좌우로만 옮긴다. */}
-      {slots?.map((filled, i) =>
-        filled && i < TOTAL_SLOTS ? (
-          <Image
-            key={i}
-            source={require('../../assets/images/bulb-glow.png')}
-            style={{
-              position: 'absolute',
-              left: (BULB_CENTERS_X[i] - GLOW_CORE_CX) * scale,
-              top: 0,
-              width: GLOW_WIDTH * scale,
-              height: GLOW_HEIGHT * scale,
-            }}
-            resizeMode="contain"
-          />
-        ) : null,
-      )}
+      {/* 켜진 전구 — 세로는 전체 높이 그대로, 좌우로만 옮긴다.
+          3상태(empty/partial/full) 렌더는 BulbGlow가 담당 — 훅을 무조건 호출한다. */}
+      {slots?.map((s, i) => (i < TOTAL_SLOTS ? <BulbGlow key={i} state={s} index={i} scale={scale} /> : null))}
 
       {/* 윤곽선은 빛 위에 얹어야 켜진 전구도 테두리가 살아난다. */}
       <Image

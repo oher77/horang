@@ -26,6 +26,7 @@ import {
 } from 'react-native';
 
 import {
+  deleteTodaySlotRecords,
   getHabitBonusAmounts,
   updateHabitBonusAmount,
 } from '../../lib/habitQueries';
@@ -130,6 +131,9 @@ export default function SettingsScreen() {
  * 개발용 도구 섹션 (2026-07-20) — __DEV__(Expo Go/개발 빌드)에서만 렌더되고
  * TestFlight/배포 빌드에는 나타나지 않는다. QA 도구 모음:
  * - 오늘 테스트 기록 삭제: "하루 1회" 게이트에 막혀 테스트 화면을 재확인할 수 없는 문제 해소
+ * - 오늘 슬롯 기록 삭제: "슬롯당 1회" 제약이 DB UNIQUE라 화면 조작으로 우회가 안 되고,
+ *   한 번 채우면 다음 시간대까지(최대 5시간) 전구 점등·배너·동전·연쇄 버튼을 다시 볼 수
+ *   없다 (2026-08-25 추가)
  * - 알림 테스트: 시간대 알림 섹션에 있다가 QA 전용이라 이쪽으로 이동 (2026-07-20)
  */
 function DevToolsSection() {
@@ -179,12 +183,52 @@ function DevToolsSection() {
     );
   }, []);
 
+  const handleDeleteTodaySlots = useCallback(() => {
+    Alert.alert(
+      '오늘 슬롯 기록 삭제',
+      '오늘의 조각·슬롯 완성·습관 보너스가 모두 삭제되어 전구가 처음 상태로 돌아갑니다.\n\n' +
+        '오늘분 스트릭도 함께 빠집니다(어제까지는 그대로). 이미 지급 체크한 보너스도 사라집니다.',
+      [
+        { text: '취소', style: 'cancel' },
+        {
+          text: '삭제',
+          style: 'destructive',
+          onPress: async () => {
+            setBusy(true);
+            try {
+              const { parts, sessions, bonuses } = await deleteTodaySlotRecords();
+              const total = parts + sessions + bonuses;
+              Alert.alert(
+                total > 0 ? '삭제되었습니다' : '오늘 기록이 없습니다',
+                total > 0
+                  ? `조각 ${parts} / 슬롯 완성 ${sessions} / 보너스 ${bonuses}건을 지웠습니다.\n홈으로 나가면 전구가 꺼져 있습니다.`
+                  : '오늘 기록된 슬롯 활동이 없어 지울 것이 없습니다.',
+              );
+            } catch (err) {
+              Alert.alert('삭제 실패', err instanceof Error ? err.message : String(err));
+            } finally {
+              setBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  }, []);
+
   return (
     <View style={styles.incomeSection}>
       <Text style={styles.sectionTitle}>개발용 도구</Text>
       <Text style={styles.sectionDesc}>
         QA 전용 — Expo Go/개발 빌드에서만 보이고 배포 앱에는 나타나지 않습니다.
       </Text>
+
+      <Pressable
+        style={[styles.testButton, busy && styles.testButtonDisabled]}
+        onPress={handleDeleteTodaySlots}
+        disabled={busy}
+      >
+        <Text style={styles.testButtonText}>오늘 슬롯 기록 삭제</Text>
+      </Pressable>
 
       <Pressable
         style={[styles.testButton, busy && styles.testButtonDisabled]}
@@ -587,11 +631,25 @@ function IncomeRulesSection() {
 }
 
 /** 습관 보너스 편집 행 kind 유니온 — lib/habitQueries.ts의 updateHabitBonusAmount 인자와 동일. */
-type HabitBonusKind = 'fullDay' | 'streak7' | 'slotPass' | 'streak14' | 'streak30' | 'streak60' | 'streak100';
+type HabitBonusKind =
+  | 'fullDay'
+  | 'streak7'
+  | 'slotPass'
+  | 'reviewDay'
+  | 'streak14'
+  | 'streak30'
+  | 'streak60'
+  | 'streak100';
 
-/** 습관 보너스 편집 행 정의(§B-2). 2026-07-11: 슬롯 통과·장기 스트릭 마일스톤 5종 추가. */
+/** 습관 보너스 편집 행 정의(§B-2). 2026-07-11: 슬롯 통과·장기 스트릭 마일스톤 5종 추가.
+ * 2026-08-24: 복습 슬롯 편입(§7.6 미결 4)으로 reviewDay 추가 — slotPass 바로 다음
+ * (둘 다 소액·고빈도라 나란히 두는 게 읽기 좋다). */
 const HABIT_BONUS_ROWS: { kind: HabitBonusKind; label: string }[] = [
-  { kind: 'slotPass', label: '미션 1개 통과' },
+  // 2026-08-25: slotPass의 라벨을 "미션 1개 통과" → "오늘 단어장 통과"로. 지급 시점이
+  // 슬롯 완성에서 오늘 단어장 조각 기록으로 옮겨졌다(즉시 보상). 필드명은 옛 이름 유지 —
+  // app_meta 키(habit_bonus_slot_pass_amount)에 사용자 편집값이 들어 있어 바꾸면 초기화된다.
+  { kind: 'slotPass', label: '오늘 단어장 통과' },
+  { kind: 'reviewDay', label: '복습 1개 통과' },
   { kind: 'fullDay', label: '하루 4회 완주' },
   { kind: 'streak7', label: '7일 연속' },
   { kind: 'streak14', label: '14일 연속' },
