@@ -5,7 +5,6 @@ import Animated, {
   Easing,
   useAnimatedStyle,
   useSharedValue,
-  withDelay,
   withRepeat,
   withSequence,
   withTiming,
@@ -172,13 +171,11 @@ const PARTIAL_HIGH_OPACITY = 0.62;
  * 바꾸려면 아래 시퀀스의 duration을 직접 건드려야 한다.
  */
 const PARTIAL_HOLD_MS = 2000;
-/**
- * 슬롯마다 시작 위상을 어긋나게 해 4개가 동시에 깜박이지 않게 한다.
- * **한 주기가 길어지면(PARTIAL_HOLD_MS ↑) 이 값도 같이 키워야 4개가 고르게 흩어진다.**
- * 220 → **550** (2026-08-25 사용자 조정, HOLD를 늘리면서 함께 벌렸다). 주기가 2.64초이므로
- * 550 × 4 = 2.2초에 걸쳐 네 전구가 차례로 지지직거린다 — 한꺼번에 깜박이지 않는다.
- */
-const PARTIAL_INDEX_STAGGER_MS = 550;
+// 슬롯별 시작 위상차(`PARTIAL_INDEX_STAGGER_MS`)는 2026-08-25에 **삭제**했다.
+// 4개가 한 박자로 깜박이는 걸 막으려던 값인데, 같은 날 "지금 열린 슬롯만 깜박인다"로
+// 바꾸면서 동시에 깜박이는 상황 자체가 사라졌다. 남겨두면 슬롯 3에서 첫 깜박임까지
+// 1.65초(550 × 3)를 기다리게 되어 손해만 있었다. 다시 필요해지는 경우는 여러 전구가
+// 동시에 깜박이도록 되돌릴 때뿐이다.
 
 /** 켜진 전구 글로우 한 칸. 상태별 opacity를 계산만 하고 훅은 무조건 호출한다
  *  (`.map()` 안에서 조건부로 훅을 호출하면 React 규칙 위반 — 슬롯 상태가 바뀔 때
@@ -202,26 +199,23 @@ function BulbGlow({
 
   useEffect(() => {
     if (shouldFlicker) {
-      opacity.value = withDelay(
-        index * PARTIAL_INDEX_STAGGER_MS,
-        withRepeat(
-          withSequence(
-            // 긴 정체 구간 — 기준 밝기에서 머문다. 이미 BASE에 있으므로 실질적으로 "대기"다.
-            withTiming(PARTIAL_BASE_OPACITY, { duration: PARTIAL_HOLD_MS, easing: Easing.linear }),
-            // 지지직 1 — 순간적으로 확 꺼졌다 올라온다.
-            withTiming(PARTIAL_LOW_OPACITY, { duration: 60, easing: Easing.linear }),
-            withTiming(PARTIAL_HIGH_OPACITY, { duration: 90, easing: Easing.linear }),
-            withTiming(PARTIAL_LOW_OPACITY, { duration: 50, easing: Easing.linear }),
-            // 지지직 2 — 짧게 한 번 더, 다른 리듬으로.
-            withTiming(PARTIAL_HIGH_OPACITY, { duration: 120, easing: Easing.linear }),
-            withTiming(PARTIAL_BASE_OPACITY, { duration: 80, easing: Easing.linear }),
-            withTiming(PARTIAL_LOW_OPACITY, { duration: 40, easing: Easing.linear }),
-            // 기준으로 복귀 — 다음 주기 시작값(BASE)과 반드시 같아야 이음새가 안 튄다.
-            withTiming(PARTIAL_BASE_OPACITY, { duration: 200, easing: Easing.linear }),
-          ),
-          -1,
-          false,
+      opacity.value = withRepeat(
+        withSequence(
+          // 긴 정체 구간 — 기준 밝기에서 머문다. 이미 BASE에 있으므로 실질적으로 "대기"다.
+          withTiming(PARTIAL_BASE_OPACITY, { duration: PARTIAL_HOLD_MS, easing: Easing.linear }),
+          // 지지직 1 — 순간적으로 확 꺼졌다 올라온다.
+          withTiming(PARTIAL_LOW_OPACITY, { duration: 60, easing: Easing.linear }),
+          withTiming(PARTIAL_HIGH_OPACITY, { duration: 90, easing: Easing.linear }),
+          withTiming(PARTIAL_LOW_OPACITY, { duration: 50, easing: Easing.linear }),
+          // 지지직 2 — 짧게 한 번 더, 다른 리듬으로.
+          withTiming(PARTIAL_HIGH_OPACITY, { duration: 120, easing: Easing.linear }),
+          withTiming(PARTIAL_BASE_OPACITY, { duration: 80, easing: Easing.linear }),
+          withTiming(PARTIAL_LOW_OPACITY, { duration: 40, easing: Easing.linear }),
+          // 기준으로 복귀 — 다음 주기 시작값(BASE)과 반드시 같아야 이음새가 안 튄다.
+          withTiming(PARTIAL_BASE_OPACITY, { duration: 200, easing: Easing.linear }),
         ),
+        -1,
+        false,
       );
     } else {
       // full = 완전 점등 / 지나간 partial = 0.5 고정(깜박임 없음) / empty = 아래서 렌더 안 함.
@@ -229,7 +223,7 @@ function BulbGlow({
       opacity.value = state === 'full' ? 1 : PARTIAL_BASE_OPACITY;
     }
     return () => cancelAnimation(opacity);
-  }, [shouldFlicker, state, index, opacity]);
+  }, [shouldFlicker, state, opacity]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     opacity: state === 'full' ? 1 : opacity.value,
