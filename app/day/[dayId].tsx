@@ -21,7 +21,7 @@ import WordDetailSheet from '../../components/WordDetailSheet';
 import {
   currentSlotIndex,
   getTodaySlots,
-  isFirstSessionOfToday,
+  getTodaySessionCount,
   isTodayDay,
   recordRetrievalSession,
 } from '../../lib/habitQueries';
@@ -41,8 +41,19 @@ const STAGGER_MS = 15;
 const PEEK_DURATION_MS = 1400;
 
 // 하루 4회 분산 인출 습관 시스템 — 세션 트래킹 상수 (설계.md §7.1, §7.3, 2026-07-09 기준 교체)
-const DWELL_MS_PER_WORD = 5000; // 오늘 첫 세션 임계: 단어수 × 5초 (2026-07-10 사용자 조정, 1초→5초)
-const LATER_SESSION_BASE_MS = 3000; // 이후 세션 임계 기본값: 3초 + 배지수×1초
+// 세션 완료(= 전구 채우기 = 보상) 체류 임계 — 세션 차수마다 규칙이 다르다.
+// 2026-08-24 딸 실사용 피드백으로 개편. 이전: 첫 세션 단어수 × 5초 / 이후 전부 3초 + 배지수 × 1초.
+// 차수는 오늘 확정된 retrieval_session 행 수로 센다(getTodaySessionCount, 0 = 첫 번째).
+// 1·2번째가 전체 단어수 기준인 이유: 그 시점엔 아직 체크가 덜 돼 있어 전량을 훑어야 한다.
+// 3·4번째가 배지 기준인 이유: 그때는 어려운 단어가 추려져 있어 그것만 다시 인출하면 된다.
+const DWELL_FIRST_MS_PER_WORD = 2500; // 1번째: 전체 단어수 × 2.5초
+const DWELL_SECOND_MS_PER_WORD = 1500; // 2번째: 전체 단어수 × 1.5초
+const DWELL_LATER_MS_PER_BADGE = 2000; // 3·4번째: 체크(배지) 단어수 × 2초
+// 3·4번째 세션의 하한(2026-08-24 사용자 확정). 배지가 0이면 곱셈 결과가 0이라 아래
+// Math.max(1000,...) 안전망에 걸려 1초 만에 통과해 버린다 — 오늘 단어장은 보상이 걸린
+// 화면이라(슬롯 통과 + 4/4 보너스) 스와이프를 안 하는 아이가 3·4번째를 1초씩 넘기게 된다.
+// 그래서 이 분기에만 별도 하한을 둔다. 1·2번째는 전체 단어수 기준이라 0이 될 일이 없다.
+const DWELL_LATER_MIN_MS = 3000;
 // 이탈 허용 유예(2026-07-12): 앱이 비활성화됐다가 이 시간 안에 돌아오면 실수/시스템 UI
 // (알림센터 등)로 보고 이어서 세고, 넘기면 임계값 전체로 리셋. AppState 상태명(inactive/
 // background)으로 구분하지 않는 이유: iOS가 알림센터를 background로 보고하는 버전이 있어
@@ -50,10 +61,18 @@ const LATER_SESSION_BASE_MS = 3000; // 이후 세션 임계 기본값: 3초 + �
 const DWELL_LEAVE_GRACE_MS = 3000;
 const BANNER_DURATION_MS = 2000; // 완료 피드백 배너 표시 시간
 
-// 인출모드 카운트다운 라인바 상수 (설계.md §7.3)
-// 시간 기준(2026-07-20 확정): 배지(스와이프 표시) 단어수 × 5초, 배지가 하나도 없으면
-// (사실상 첫 세션) 전체 단어수 × 5초 폴백. 배지 수는 진입/재시작 시점에 1회 계산해 고정.
-const COUNTDOWN_MS_PER_WORD = 5000;
+// 인출모드 카운트다운(타임어택) 라인바 상수 — 오늘 단어장·복습 Day **공통**
+// (2026-08-24 사용자 확정: 화면마다 규칙이 다르면 아이가 헷갈리므로 일치시킨다).
+//
+// 길이 = 전체 단어수 × 3초 고정. 배지 수는 쓰지 않는다 — 2026-07-20에는 배지수 × 5초
+// (배지 0이면 전체 × 5초 폴백)였으나 다음 두 이유로 폐기했다:
+//  ⓐ 배지 0의 뜻이 화면마다 정반대다. 오늘 Day는 "아직 분류 안 함"(전량 훑어야 함),
+//     복습 Day는 "다 외웠음". 같은 식을 쓰면 가장 쉬운 Day가 가장 긴 시간을 받는다.
+//  ⓑ 배지로 길이를 정하면 길이가 아이의 자기표시에 휘둘린다(배지 1개짜리 Day가 5초로
+//     최단이 되는 등). 카운트다운은 보상과 무관한 순수 집중 장치라 예측 가능한 고정
+//     길이가 낫다.
+// 보상 조건(세션 완료 판정)은 이것과 별개로 체류시간이 본다(DWELL_* 상수 참고).
+const COUNTDOWN_MS_PER_WORD = 3000;
 // 인출모드 시간 임박 사이렌 (2026-07-11 사용자 요청) — 남은 시간이 이 값 이하로 떨어지는
 // 순간 트리거, SIREN_DURATION_MS 동안 표시 후 자동으로 사라진다. 총 시간이
 // SIREN_MIN_TOTAL_MS 이하면 아예 예약하지 않는다(짧은 카운트다운에서 진입 직후
@@ -155,6 +174,9 @@ export default function DayScreen() {
   // 트래킹 초기화 1회 가드 — 초기화 성공 후에는 words 변경(스와이프에 의한 setWords)이
   // 발생해도 임계값 재계산이 다시 일어나지 않는다("세션 중 임계 고정" 스펙의 필수 전제이자,
   // 기존에 스와이프마다 쿼리 4개가 재실행되던 잠복 문제의 수정).
+  // ★ 이 가드는 "초기화 성공" 때만 서던 것이라 복습 Day에서는 영원히 서지 않아 같은
+  //   재실행이 남아 있었다(2026-08-24 수정). 아래 초기화 effect의 실패 분기 참고 —
+  //   영구 실패(복습 Day)는 가드를 세우고, 일시 실패(데드존)는 세우지 않는다.
   const trackingInitializedRef = useRef(false);
 
   // 체류 타이머 상태 — "남은 시간만큼 setTimeout" 방식. 이탈(비활성화) 후 복귀가
@@ -203,24 +225,36 @@ export default function DayScreen() {
     if (trackingInitializedRef.current) return;
 
     let cancelled = false;
-    Promise.all([isTodayDay(id), isFirstSessionOfToday(), currentSlotIndex(), getTodaySlots()]).then(
-      ([todayDay, firstSession, slotIndex, todaySlots]) => {
+    Promise.all([isTodayDay(id), getTodaySessionCount(), currentSlotIndex(), getTodaySlots()]).then(
+      ([todayDay, sessionCount, slotIndex, todaySlots]) => {
         if (cancelled) return;
-        if (!todayDay || slotIndex === null) {
-          // 오늘 Day가 아니거나 데드존 — 트래킹을 시작하지 않는다(다음 words 변경 시 재시도 가능).
+        // 실패 두 종류를 구분한다(2026-08-24). 전에는 둘을 한 조건으로 묶어 똑같이
+        // "가드 없이 return"했는데, 그러면 복습 Day에서 가드가 영원히 안 서서
+        // 스와이프(setWords)마다 위 쿼리 4개가 통째로 재실행됐다.
+        if (!todayDay) {
+          // 복습 Day — 판정 근거가 day.created_day라 화면이 열려 있는 동안 절대 바뀌지
+          // 않는다(자정을 넘겨도 오늘이 될 수 없다). 재시도해도 답이 같으므로 가드를
+          // 세워 재실행을 끊는다.
+          trackingInitializedRef.current = true;
+          return;
+        }
+        if (slotIndex === null) {
+          // 데드존(00:00–05:59) — 지금은 실패지만 슬롯이 열리면 성공한다. 가드를 세우지
+          // 않고 나가 다음 words 변경 시 재시도되게 둔다(기존 동작 유지).
           return;
         }
         trackingInitializedRef.current = true;
 
-        // 미션 임계값(체류 단독, 2026-07-09 확정 — 설계.md §7.1): 오늘 첫 세션은 단어수×5초
-        // (DWELL_MS_PER_WORD, 2026-07-10 1초→5초 조정), 이후 세션은 3초 + (스와이프 배지
-        // 단어수)×1초. 배지 수는 이 시점(화면 로드) 1회 계산해 세션 중 스와이프해도 임계는 고정된다.
+        // 미션 임계값(체류 단독, 설계.md §7.1) — 세션 차수별 3분기(상수부 주석 참조).
+        // 배지 수는 이 시점(화면 로드) 1회 계산해 세션 중 스와이프해도 임계는 고정된다.
         const badgeWordCount = words.filter((w) => w.recall_stage > 0).length;
         const thresholdMs = Math.max(
           1000,
-          firstSession
-            ? words.length * DWELL_MS_PER_WORD
-            : LATER_SESSION_BASE_MS + badgeWordCount * 1000,
+          sessionCount === 0
+            ? words.length * DWELL_FIRST_MS_PER_WORD
+            : sessionCount === 1
+              ? words.length * DWELL_SECOND_MS_PER_WORD
+              : Math.max(DWELL_LATER_MIN_MS, badgeWordCount * DWELL_LATER_MS_PER_BADGE),
         );
         dwellThresholdMsRef.current = thresholdMs;
         dwellRemainingMsRef.current = thresholdMs;
@@ -414,22 +448,16 @@ export default function DayScreen() {
 
   const wordCount = words?.length ?? 0;
 
-  // 인출모드 카운트다운 라인바 — 인출모드로 (재)진입/재시작할 때마다 리셋 후 배지 단어수
+  // 인출모드 카운트다운 라인바 — 인출모드로 (재)진입/재시작할 때마다 리셋 후 전체 단어수
   // 기준 시간(상수부 주석 참조) 동안 선형 감소. trackingEnabled와 무관한 순수 시각 장치라
   // 복습 Day·데드존에서도 동작(설계.md §7.3).
-  // words를 deps에 넣지 않고 ref로 읽는다 — 세션 중 스와이프(setWords 재발행)에 라인바가
-  // 반응하면 안 되고, 배지 수도 effect 실행 시점 1회만 계산해 고정한다(§7.1 습관 판정과 동일 방식).
-  const wordsRef = useRef<DayWordRowData[] | null>(null);
-  useEffect(() => {
-    wordsRef.current = words;
-  }, [words]);
-
+  // 스와이프(setWords 재발행)에 라인바가 반응하지 않는 것은 deps가 words가 아니라
+  // wordCount(= words.length)이기 때문이다 — 스와이프는 길이를 바꾸지 않는다.
   useEffect(() => {
     if (mode !== 'retrieval' || wordCount === 0) return;
     cancelAnimation(lineBarProgress);
     lineBarProgress.value = 1;
-    const badgeCount = wordsRef.current?.filter((w) => w.recall_stage > 0).length ?? 0;
-    const duration = (badgeCount > 0 ? badgeCount : wordCount) * COUNTDOWN_MS_PER_WORD;
+    const duration = wordCount * COUNTDOWN_MS_PER_WORD;
     lineBarProgress.value = withTiming(0, {
       duration,
       easing: Easing.linear,

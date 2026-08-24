@@ -242,15 +242,22 @@ export async function getCurrentStreak(): Promise<number> {
   return streak;
 }
 
-/** 오늘 retrieval_session 행이 하나도 없으면 true (§7.1 첫 세션 체류 임계 판단용). */
-export async function isFirstSessionOfToday(): Promise<boolean> {
+/**
+ * 오늘 이미 확정된 retrieval_session 행 수 = "지금 들어온 게 오늘 몇 번째 세션인가"
+ * (0이면 첫 번째). 체류 임계가 세션 차수마다 달라져서 boolean이 아니라 개수를 돌려준다
+ * (2026-08-24 개편 — 그 전에는 isFirstSessionOfToday()가 `=== 0`만 비교했다).
+ *
+ * ★ 슬롯 인덱스가 아니라 **완료 개수**다. 슬롯 1을 건너뛰고 0·2를 채웠으면 다음은
+ *   슬롯 3이지만 세션으로는 3번째다. 차수는 "몇 번 해냈나"를 세는 것이 맞다.
+ */
+export async function getTodaySessionCount(): Promise<number> {
   const db = getUserDb();
   const today = todayEpochDay();
   const row = await db.getFirstAsync<{ cnt: number }>(
     'SELECT COUNT(*) AS cnt FROM retrieval_session WHERE local_day = ?',
     [today],
   );
-  return (row?.cnt ?? 0) === 0;
+  return row?.cnt ?? 0;
 }
 
 /** day.created_day == todayEpochDay() 여부 (Phase 1은 오늘 단어장만 인정, §7.6 미결 4). */
