@@ -109,6 +109,78 @@ async function scheduleSlotAt(target: Date, slotIndex: number): Promise<void> {
 }
 
 /**
+ * 예약 테스트 알림 문구. "테스트/시험/점수"라는 단어를 쓰지 않는다 — 시험을
+ * 연상시키지 않기 위함(작업 지시 가드레일, 딸 피드백 기반).
+ */
+async function scheduleTestAlarmAt(target: Date): Promise<void> {
+  await Notifications.scheduleNotificationAsync({
+    content: {
+      title: '오늘 단어 확인할 시간이야',
+      body: '틀려도 아무 일 없어. 몇 개 남았나만 보자.',
+      sound: true,
+    },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.DATE,
+      date: target,
+    },
+  });
+}
+
+/**
+ * 예약 테스트 알림을 48시간 지평선(오늘+내일)으로 재계산해 예약한다
+ * (2026-08-25 정정 — 이전 버전은 'due' 상태에서 즉시(1초 뒤) 알림을 추가로
+ * 깔았는데, rescheduleSlotNotifications()가 앱 시작·포그라운드 복귀마다
+ * 불리므로 due 상태로 앱을 열 때마다 이미 떠 있는 덮개와 똑같은 내용의
+ * 알림이 반복 발송되는 결함이었다. 알람 시각에 이미 'before' 예약분이
+ * 한 번 울렸으므로 'due'는 그 이후 상태 — 추가 알림이 필요 없다).
+ *
+ * - 오늘분: before → 오늘 hour시 0분 1건 / snoozed → untilMs 1건 /
+ *   due·done·skipped·off·unavailable → 오늘분 없음.
+ * - 내일분: config.enabled === true면 오늘 상태와 무관하게 내일 hour시 0분
+ *   1건(내일은 새 날이므로 오늘 done/skipped여도 내일은 알려야 한다).
+ *   enabled === false면 없음.
+ *
+ * notifications_enabled(슬롯 알림)와는 독립 — 슬롯 알림이 꺼져 있어도 테스트
+ * 예약이 켜져 있으면 알림이 간다.
+ *
+ * notifications.ts ↔ testSchedule.ts 순환 import 방지를 위해 동적 import를
+ * 쓴다(testSchedule.ts도 이 파일을 동적 import로만 참조한다).
+ */
+async function scheduleTestAlarmIfDue(): Promise<void> {
+  const { getTestAlarmConfig, getTestGateState } = await import('./testSchedule');
+  const config = await getTestAlarmConfig();
+  const gate = await getTestGateState();
+
+  const now = new Date();
+
+  switch (gate.kind) {
+    case 'before': {
+      const todayTarget = dateAtHour(now, gate.hour);
+      if (todayTarget.getTime() > now.getTime()) {
+        await scheduleTestAlarmAt(todayTarget);
+      }
+      break;
+    }
+    case 'snoozed': {
+      await scheduleTestAlarmAt(new Date(gate.untilMs));
+      break;
+    }
+    case 'due':
+    case 'done':
+    case 'skipped':
+    case 'off':
+    case 'unavailable':
+      break;
+  }
+
+  if (config.enabled) {
+    const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    const tomorrowTarget = dateAtHour(tomorrow, config.hour);
+    await scheduleTestAlarmAt(tomorrowTarget);
+  }
+}
+
+/**
  * 시간대 미션 알림을 재계산해 다시 예약한다(핵심 로직, 설계.md §7.6).
  *
  * 1. 비활성이면 전체 취소 후 종료.
@@ -119,6 +191,10 @@ async function scheduleSlotAt(target: Date, slotIndex: number): Promise<void> {
  *    → 오늘+내일로 48시간 지평선을 커버하고, 앱을 다시 열 때마다 이 함수가 또
  *      불려 최신 상태로 갱신된다.
  *
+ * cancelAllScheduledNotificationsAsync()로 시작하므로 예약 테스트 알림도 반드시
+ * 이 함수 안에서 함께 예약한다 — 별도 함수에서 예약하면 이 함수가 호출될 때마다
+ * (앱 시작·포그라운드 복귀·슬롯 시간 변경) 조용히 지워진다.
+ *
  * 알림 예약 실패가 앱 동작을 막으면 안 되므로 전체를 try/catch로 감싸고
  * console.warn만 남긴다(작업 지시 가드레일).
  */
@@ -127,34 +203,42 @@ export async function rescheduleSlotNotifications(): Promise<void> {
     const enabled = await isNotificationsEnabled();
     if (!enabled) {
       await Notifications.cancelAllScheduledNotificationsAsync();
-      return;
-    }
+    } else {
+      await Notifications.cancelAllScheduledNotificationsAsync();
 
-    await Notifications.cancelAllScheduledNotificationsAsync();
+      const slots = await getSlotConfig();
+      const todaySlots = await getTodaySlots();
 
-    const slots = await getSlotConfig();
-    const todaySlots = await getTodaySlots();
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const tomorrow = new Date(today.getTime() + 86400000);
 
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const tomorrow = new Date(today.getTime() + 86400000);
+      for (const slot of slots) {
+        const alreadyDone = todaySlots[slot.slotIndex] ?? false;
+        if (alreadyDone) continue;
 
-    for (const slot of slots) {
-      const alreadyDone = todaySlots[slot.slotIndex] ?? false;
-      if (alreadyDone) continue;
-
-      const todayTarget = dateAtHour(today, slot.startHour);
-      if (todayTarget.getTime() > now.getTime()) {
-        await scheduleSlotAt(todayTarget, slot.slotIndex);
+        const todayTarget = dateAtHour(today, slot.startHour);
+        if (todayTarget.getTime() > now.getTime()) {
+          await scheduleSlotAt(todayTarget, slot.slotIndex);
+        }
       }
-    }
 
-    for (const slot of slots) {
-      const tomorrowTarget = dateAtHour(tomorrow, slot.startHour);
-      await scheduleSlotAt(tomorrowTarget, slot.slotIndex);
+      for (const slot of slots) {
+        const tomorrowTarget = dateAtHour(tomorrow, slot.startHour);
+        await scheduleSlotAt(tomorrowTarget, slot.slotIndex);
+      }
     }
   } catch (err) {
     console.warn('[notifications] 재예약 실패', err);
+  }
+
+  // notifications_enabled와 독립적으로, 예약 테스트 알림은 항상 별도 판정한다.
+  // 위 블록에서 cancelAllScheduledNotificationsAsync()가 이미 실행됐으므로(비활성
+  // 경로 포함) 여기서 새로 추가하는 것만으로 최신 상태가 된다.
+  try {
+    await scheduleTestAlarmIfDue();
+  } catch (err) {
+    console.warn('[notifications] 예약 테스트 알림 재예약 실패', err);
   }
 }
 

@@ -50,6 +50,14 @@ import {
   type DifficultyLevel,
   type SlotWindow,
 } from '../../lib/settings';
+import {
+  clearTodayTestGateState,
+  DEFAULT_ALARM_HOUR,
+  getTestAlarmConfig,
+  isTestAlarmPermissionGranted,
+  setTestAlarm,
+  type TestAlarmConfig,
+} from '../../lib/testSchedule';
 
 const LEVEL_OPTIONS: { level: DifficultyLevel; label: string; hint: string }[] = [
   { level: 1, label: '고1', hint: '짧고 평이한 예문' },
@@ -113,6 +121,8 @@ export default function SettingsScreen() {
           <WordsPerDaySection />
 
           <SlotConfigSection />
+
+          <TestAlarmSection />
 
           <NotificationSection />
 
@@ -215,6 +225,31 @@ function DevToolsSection() {
     );
   }, []);
 
+  const handleClearTestGateState = useCallback(() => {
+    Alert.alert(
+      '오늘 확인 미루기 기록 삭제',
+      '오늘 사용한 미루기 횟수와 오늘 넘어가기 기록이 삭제됩니다. 예약 설정(켬/끔·시각)은 그대로입니다.',
+      [
+        { text: '취소', style: 'cancel' },
+        {
+          text: '삭제',
+          style: 'destructive',
+          onPress: async () => {
+            setBusy(true);
+            try {
+              await clearTodayTestGateState();
+              Alert.alert('삭제되었습니다', '미루기 3번을 다시 쓸 수 있고, 오늘 넘어가기도 초기화됐습니다.');
+            } catch (err) {
+              Alert.alert('삭제 실패', err instanceof Error ? err.message : String(err));
+            } finally {
+              setBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  }, []);
+
   return (
     <View style={styles.incomeSection}>
       <Text style={styles.sectionTitle}>개발용 도구</Text>
@@ -236,6 +271,14 @@ function DevToolsSection() {
         disabled={busy}
       >
         <Text style={styles.testButtonText}>오늘 테스트 기록 삭제</Text>
+      </Pressable>
+
+      <Pressable
+        style={[styles.testButton, busy && styles.testButtonDisabled]}
+        onPress={handleClearTestGateState}
+        disabled={busy}
+      >
+        <Text style={styles.testButtonText}>오늘 확인 미루기 기록 삭제</Text>
       </Pressable>
 
       <Pressable
@@ -425,24 +468,33 @@ function clampHour(hour: number): number {
   return Math.min(24, Math.max(0, hour));
 }
 
-/** hour(0~24) 값을 -/+ 버튼으로 조정하는 스테퍼. 키보드를 띄우지 않는다. */
+/**
+ * hour 값을 -/+ 버튼으로 조정하는 스테퍼. 키보드를 띄우지 않는다.
+ * min/max는 optional — 생략 시 기존 호출부(슬롯 시간대, 0~24)와 동일하게 동작한다.
+ * (2026-08-25: 단어 확인 시간 섹션이 0~23 범위로 쓰기 위해 추가 — 상한에서 버튼을
+ * 비활성화해야 "눌리는데 반응 없는" 고장 난 버튼처럼 보이지 않는다.)
+ */
 function HourStepper({
   value,
   disabled,
   onDecrement,
   onIncrement,
+  min = 0,
+  max = 24,
 }: {
   value: number;
   disabled: boolean;
   onDecrement: () => void;
   onIncrement: () => void;
+  min?: number;
+  max?: number;
 }) {
   return (
     <View style={styles.stepper}>
       <Pressable
         style={styles.stepperButton}
         onPress={onDecrement}
-        disabled={disabled || value <= 0}
+        disabled={disabled || value <= min}
         hitSlop={8}
       >
         <Text style={styles.stepperButtonText}>-</Text>
@@ -451,11 +503,134 @@ function HourStepper({
       <Pressable
         style={styles.stepperButton}
         onPress={onIncrement}
-        disabled={disabled || value >= 24}
+        disabled={disabled || value >= max}
         hitSlop={8}
       >
         <Text style={styles.stepperButtonText}>+</Text>
       </Pressable>
+    </View>
+  );
+}
+
+/**
+ * 단어 확인 시간 섹션 (2026-08-25, 딸 피드백 기반).
+ *
+ * 배경: "버튼을 누르는 결정"이 무서운 것이지 확인 자체가 무서운 게 아니므로,
+ * 정한 시각이 되면 홈에 덮개가 떠서 그 결정을 없앤다. 딸이 스스로 자기에게
+ * 거는 약속이라 문구에 "시험/테스트/점수/강제"를 쓰지 않는다.
+ *
+ * 켜기는 즉시, 끄기·시각 변경은 내일부터 적용된다(lib/testSchedule.ts의
+ * setTestAlarm 참고 — 불안한 순간에 설정으로 도망가는 길을 막는 장치). 화면에
+ * pending이 있으면 스위치/스테퍼는 "방금 고른 값"(pending 기준)을 보여주고,
+ * 그 아래 안내 문구로 "오늘은 아직 이전 값"임을 설명한다.
+ */
+function TestAlarmSection() {
+  const [config, setConfig] = useState<TestAlarmConfig | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [permissionDenied, setPermissionDenied] = useState(false);
+  const [sectionError, setSectionError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([getTestAlarmConfig(), isTestAlarmPermissionGranted()])
+      .then(([cfg, granted]) => {
+        if (cancelled) return;
+        setConfig(cfg);
+        setPermissionDenied(!granted);
+        setLoaded(true);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setSectionError(err instanceof Error ? err.message : String(err));
+          setLoaded(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // 화면에 보여줄 값: pending이 있으면 pending 기준(방금 고른 값), 없으면 확정값.
+  const displayEnabled = config ? (config.pending ? config.pending.enabled : config.enabled) : false;
+  const displayHour = config ? (config.pending ? config.pending.hour : config.hour) : DEFAULT_ALARM_HOUR;
+
+  const applyChange = useCallback(async (next: { enabled: boolean; hour: number }) => {
+    setSectionError('');
+    setBusy(true);
+    try {
+      const result = await setTestAlarm(next);
+      setConfig(result);
+      if (next.enabled) {
+        const granted = await isTestAlarmPermissionGranted();
+        setPermissionDenied(!granted);
+      }
+    } catch (err) {
+      setSectionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const handleToggle = useCallback(
+    (next: boolean) => {
+      applyChange({ enabled: next, hour: displayHour });
+    },
+    [applyChange, displayHour],
+  );
+
+  const handleChangeHour = useCallback(
+    (delta: number) => {
+      const nextHour = Math.min(23, Math.max(0, displayHour + delta));
+      if (nextHour === displayHour) return;
+      applyChange({ enabled: displayEnabled, hour: nextHour });
+    },
+    [applyChange, displayEnabled, displayHour],
+  );
+
+  const pending = config?.pending ?? null;
+
+  return (
+    <View style={styles.incomeSection}>
+      <Text style={styles.sectionTitle}>단어 확인 시간</Text>
+      <Text style={styles.sectionDesc}>
+        정한 시각이 되면 홈 화면에 떠요. 바로 하기 어려우면 30분씩 세 번까지 미룰 수 있어요.{'\n'}
+        <Text style={styles.sectionDescSub}>켜는 건 바로, 끄거나 시각을 바꾸는 건 내일부터 적용돼요.</Text>
+      </Text>
+
+      {!loaded && <Text style={styles.optionHint}>불러오는 중…</Text>}
+
+      <View style={styles.incomeRow}>
+        <Text style={styles.incomeRowLabel}>정해진 시각에 확인하기</Text>
+        <Switch value={displayEnabled} onValueChange={handleToggle} disabled={!loaded || busy} />
+      </View>
+
+      <View style={[styles.slotRow, { marginTop: 10 }, !displayEnabled && styles.rowDimmed]}>
+        <Text style={styles.incomeRowLabel}>확인 시각</Text>
+        <HourStepper
+          value={displayHour}
+          disabled={!loaded || busy || !displayEnabled}
+          onDecrement={() => handleChangeHour(-1)}
+          onIncrement={() => handleChangeHour(1)}
+          max={23}
+        />
+      </View>
+
+      {pending && (
+        <Text style={styles.pendingNotice}>
+          {pending.enabled
+            ? `내일부터 ${String(pending.hour).padStart(2, '0')}시로 바뀌어요. 오늘은 지금 설정 그대로예요.`
+            : '내일부터 꺼져요. 오늘은 지금 설정 그대로예요.'}
+        </Text>
+      )}
+
+      {displayEnabled && permissionDenied && (
+        <Text style={styles.optionHint}>
+          알림 권한이 꺼져 있어 알려주지는 못하지만, 시각이 되면 앱을 열었을 때 화면에는 떠요.
+        </Text>
+      )}
+
+      {sectionError ? <Text style={styles.error}>{sectionError}</Text> : null}
     </View>
   );
 }
@@ -801,6 +976,9 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     lineHeight: 18,
   },
+  sectionDescSub: {
+    color: '#aaa',
+  },
   options: {
     gap: 12,
   },
@@ -931,6 +1109,15 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#2e8b57',
     textAlign: 'center',
+  },
+  rowDimmed: {
+    opacity: 0.4,
+  },
+  pendingNotice: {
+    marginTop: 12,
+    fontSize: 13,
+    color: '#ff8a34',
+    lineHeight: 18,
   },
   testButton: {
     marginTop: 14,
