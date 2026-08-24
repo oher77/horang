@@ -162,7 +162,10 @@ const PARTIAL_HIGH_OPACITY = 0.62;
 /**
  * 지지직 한 번 치고 나서 조용히 머무는 시간 — **깜박임 간격을 조절하는 손잡이는 여기 하나뿐.**
  *
- * 눈에 보이는 멈춤 = 이 값 + 마지막 복귀 램프 200ms. 지금은 약 2.2초다.
+ * ★ 이 대기는 시퀀스의 **맨 뒤**에 있다. 앞에 두면 전구가 뜨자마자 2초를 가만히
+ *   있다가 처음 깜박여서, 정작 재촉이 필요한 순간(홈에 막 돌아왔을 때)을 놓친다.
+ *
+ * 눈에 보이는 멈춤 = 이 값 + 그 앞 복귀 램프 200ms. 지금은 약 2.2초다.
  * (2026-08-25 사용자 조정: 520 → 2800 → **2000**. 520은 0.7초라 쉴 새 없이 깜박이는
  *  느낌이었고, 2800은 3초로 너무 뜸했다.)
  * 값을 키우면 "가끔 한 번씩 지지직"에 가까워지고, 줄이면 "고장 나기 직전"에 가까워진다.
@@ -201,8 +204,10 @@ function BulbGlow({
     if (shouldFlicker) {
       opacity.value = withRepeat(
         withSequence(
-          // 긴 정체 구간 — 기준 밝기에서 머문다. 이미 BASE에 있으므로 실질적으로 "대기"다.
-          withTiming(PARTIAL_BASE_OPACITY, { duration: PARTIAL_HOLD_MS, easing: Easing.linear }),
+          // ★ 지지직이 **맨 앞**이다. 대기(PARTIAL_HOLD_MS)를 앞에 두면 전구가 화면에
+          //   뜨고 나서 2초를 가만히 있다가 처음 깜박인다 — 홈에 돌아온 순간이 바로
+          //   재촉이 필요한 순간인데 그때 아무 일도 안 일어난다(2026-08-25 실기기에서
+          //   사용자가 잡아냄). **대기를 위로 올리지 말 것.**
           // 지지직 1 — 순간적으로 확 꺼졌다 올라온다.
           withTiming(PARTIAL_LOW_OPACITY, { duration: 60, easing: Easing.linear }),
           withTiming(PARTIAL_HIGH_OPACITY, { duration: 90, easing: Easing.linear }),
@@ -211,8 +216,12 @@ function BulbGlow({
           withTiming(PARTIAL_HIGH_OPACITY, { duration: 120, easing: Easing.linear }),
           withTiming(PARTIAL_BASE_OPACITY, { duration: 80, easing: Easing.linear }),
           withTiming(PARTIAL_LOW_OPACITY, { duration: 40, easing: Easing.linear }),
-          // 기준으로 복귀 — 다음 주기 시작값(BASE)과 반드시 같아야 이음새가 안 튄다.
+          // 기준으로 복귀.
           withTiming(PARTIAL_BASE_OPACITY, { duration: 200, easing: Easing.linear }),
+          // 대기 — 기준 밝기에 머문다. 이미 BASE에 있으므로 실질적으로 정지 구간이다.
+          // 이게 마지막이라 **시퀀스의 끝값이 BASE**이고, 다음 주기의 첫 단계도 BASE에서
+          // 출발하므로 이음새에서 값이 튀지 않는다(주기 경계 불변식은 그대로 지켜진다).
+          withTiming(PARTIAL_BASE_OPACITY, { duration: PARTIAL_HOLD_MS, easing: Easing.linear }),
         ),
         -1,
         false,
