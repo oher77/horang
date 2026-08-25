@@ -770,3 +770,14 @@ export async function deleteTodaySlotRecords(): Promise<DeletedSlotRecords> {
 
   return { parts, sessions, bonuses };
 }
+
+/**
+ * 지금까지 단어장 세션(슬롯 조각)을 한 번이라도 끝냈는가 — 홈 알림 opt-in 덮개의
+ * 노출 조건 중 하나(첫 세션 이후에만 물어본다). `slot_part`에 행이 하나라도 있으면
+ * true (날짜 무관 — 전체 이력 기준).
+ */
+export async function hasCompletedAnySession(): Promise<boolean> {
+  const db = getUserDb();
+  const row = await db.getFirstAsync<{ x: number }>('SELECT 1 AS x FROM slot_part LIMIT 1');
+  return row != null;
+}

@@ -37,6 +37,7 @@ import {
   TOP_GAP_DESIGN_PX,
 } from '../components/home/mockupLayout';
 import NotebookBackground, { PAPER_COLOR } from '../components/home/NotebookBackground';
+import NotifyOptInOverlay from '../components/home/NotifyOptInOverlay';
 import TestGateOverlay from '../components/home/TestGateOverlay';
 import TigerHero from '../components/home/TigerHero';
 import { epochDayToDateString, todayEpochDay } from '../lib/dates';
@@ -46,6 +47,7 @@ import {
   getTodaySlotStates,
   type SlotState,
 } from '../lib/habitQueries';
+import { shouldAskNotificationOptIn } from '../lib/notifications';
 import { ensureTodayDay, type DayWithWords } from '../lib/queries';
 import { getTestGateState, type TestGateState } from '../lib/testSchedule';
 
@@ -76,6 +78,18 @@ export default function Index() {
       .catch(() => {
         // 조회 실패 시 덮개를 띄우지 않는다 — 예약 기능이 메인 흐름(오늘 단어장)을
         // 막으면 안 된다.
+      });
+  }, []);
+
+  // 홈 알림 opt-in 덮개 — null이면 "아직 조회 중"(덮개를 띄우지 않는다). testGate와
+  // 완전히 같은 패턴: 조회 실패 시 덮개를 띄우지 않아 메인 흐름을 막지 않는다.
+  const [askNotify, setAskNotify] = useState<boolean | null>(null);
+
+  const loadAskNotify = useCallback(() => {
+    shouldAskNotificationOptIn()
+      .then(setAskNotify)
+      .catch(() => {
+        // 조회 실패 시 덮개를 띄우지 않는다.
       });
   }, []);
 
@@ -120,34 +134,39 @@ export default function Index() {
   // 홈 마운트 시 최초 판정. focus/포그라운드 복귀는 위 useFocusEffect/AppState에서 처리.
   useEffect(() => {
     loadTestGate();
-  }, [loadTestGate]);
+    loadAskNotify();
+  }, [loadTestGate, loadAskNotify]);
 
   // 단어장 화면에서 돌아올 때 게이지 갱신 필요(§7.3) — focus 시마다 재조회.
   // 오늘 Day·날짜 라벨도 함께 갱신 (다른 화면에 머무는 사이 자정을 넘긴 경우 대응).
   // 예약 테스트 덮개도 같은 시점에 재판정한다 — 테스트를 마치고 홈으로 돌아오면
   // done이 되어 덮개가 사라져야 하고, 미루기 30분이 지난 뒤 홈에 오면 다시 떠야 한다.
+  // 알림 opt-in 덮개도 같은 시점에 재판정한다 — 첫 세션을 막 끝내고 단어장에서
+  // 돌아오면 그 순간 노출 조건이 충족되므로 focus 복귀에서 갱신해야 뜬다.
   useFocusEffect(
     useCallback(() => {
       loadHabit();
       loadTodayDay({ silent: true });
       loadTestGate();
-    }, [loadHabit, loadTodayDay, loadTestGate]),
+      loadAskNotify();
+    }, [loadHabit, loadTodayDay, loadTestGate, loadAskNotify]),
   );
 
   // 앱을 홈 화면에 둔 채 백그라운드로 갔다가 다음 날 복귀하는 경우 — focus 이벤트가
   // 없으므로 AppState active 복귀에서도 갱신해야 새 단어장이 생성된다.
   // 예약 테스트 덮개도 마찬가지 — 홈을 켜둔 채 대기하다 알람 시각을 넘기고
-  // 돌아오는 경우를 포함한다.
+  // 돌아오는 경우를 포함한다. 알림 opt-in 덮개도 동일한 이유로 함께 갱신한다.
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
         loadHabit();
         loadTodayDay({ silent: true });
         loadTestGate();
+        loadAskNotify();
       }
     });
     return () => sub.remove();
-  }, [loadHabit, loadTodayDay, loadTestGate]);
+  }, [loadHabit, loadTodayDay, loadTestGate, loadAskNotify]);
 
   return (
     <>
@@ -246,6 +265,23 @@ export default function Index() {
       */}
       {testGate?.kind === 'due' && (
         <TestGateOverlay gate={testGate} onResolved={loadTestGate} />
+      )}
+
+      {/*
+        홈 알림 opt-in 덮개 — 첫 단어장 세션을 끝낸 직후 한 번만 "알림 켤까?"를 묻는다.
+        예약 테스트 덮개가 떠 있으면 띄우지 않는다 — 둘 다 전체 화면이라 겹치면 하나가
+        다른 하나를 완전히 가린다. 테스트 덮개가 시간에 묶여 있어 우선이고, 알림 질문은
+        다음 기회에 떠도 아무것도 잃지 않는다.
+
+        `testGate !== null`(= 판정이 끝났다)까지 요구하는 이유: 두 판정이 병렬 비동기라
+        알림 쪽이 먼저 끝날 수 있는데, 그 틈에 이 덮개가 떴다가 testGate가 'due'로
+        확정되는 순간 교체된다. 눈에 거슬리는 정도를 넘어, 그 짧은 사이에 [나중에]가
+        눌리면 **다시 물어볼 수 없는 질문이 소모된다**(app_meta에 물어봤음이 박힌다).
+        testGate 조회가 실패하면 이 덮개도 안 뜨게 되지만, 둘 다 같은 user.db를 읽으므로
+        한쪽이 실패하면 다른 쪽도 실패한다 — 실질적인 손해가 없다.
+      */}
+      {testGate !== null && testGate.kind !== 'due' && askNotify === true && (
+        <NotifyOptInOverlay onResolved={loadAskNotify} />
       )}
     </>
   );

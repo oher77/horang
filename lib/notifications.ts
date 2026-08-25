@@ -17,9 +17,11 @@
 import * as Notifications from 'expo-notifications';
 
 import { getUserDb } from './db';
-import { getSlotConfig, getTodaySlots } from './habitQueries';
+import { getSlotConfig, getTodaySlots, hasCompletedAnySession } from './habitQueries';
 
 const NOTIFICATIONS_ENABLED_KEY = 'notifications_enabled';
+/** 홈 알림 opt-in 덮개를 이미 물어봤는지('1'|없음). 사용자가 어느 버튼을 골랐든 저장된다. */
+const NOTIFY_OPTIN_ASKED_KEY = 'notify_optin_asked';
 
 /** 포그라운드 수신 시에도 배너/목록에 표시 + 소리(설계 요구사항). 모듈 로드 시 1회 설정. */
 Notifications.setNotificationHandler({
@@ -275,4 +277,42 @@ export async function scheduleTestNotification(): Promise<boolean> {
     console.warn('[notifications] 테스트 알림 예약 실패', err);
     return false;
   }
+}
+
+/**
+ * 홈 알림 opt-in 덮개 (첫 세션 직후 "알림 켤까?") — 관련 함수 3개.
+ *
+ * iOS 권한 팝업은 앱 생애 딱 한 번만 뜬다. 거부되면 그 뒤로는 요청해도 아무것도
+ * 안 뜨고 즉시 거부로 처리되며 복구는 iOS 설정 앱뿐이다. 그래서 우리 화면으로
+ * 먼저 묻고 "응"일 때만 진짜 권한 팝업(setNotificationsEnabled 내부)을 부른다.
+ */
+
+/** 홈에서 "알림 켤까?"를 지금 물어야 하는가 — 세 조건을 전부 만족해야 true. */
+export async function shouldAskNotificationOptIn(): Promise<boolean> {
+  const db = getUserDb();
+  const row = await db.getFirstAsync<{ value: string }>(
+    'SELECT value FROM app_meta WHERE key = ?',
+    [NOTIFY_OPTIN_ASKED_KEY],
+  );
+  if (row?.value === '1') return false; // 이미 물어봤음
+
+  if (await isNotificationsEnabled()) return false; // 이미 켜져 있으면 물을 이유 없음
+
+  return hasCompletedAnySession(); // 첫 세션을 끝냈을 때만
+}
+
+/** 물어봤음을 영속한다(사용자가 어느 버튼을 골랐든 호출). */
+export async function markNotificationOptInAsked(): Promise<void> {
+  const db = getUserDb();
+  await db.runAsync(
+    `INSERT INTO app_meta (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    [NOTIFY_OPTIN_ASKED_KEY, '1'],
+  );
+}
+
+/** __DEV__ QA 전용 — 물어본 기록을 지워 opt-in 덮개가 다시 뜨게 한다. */
+export async function resetNotifyOptInAsk(): Promise<void> {
+  const db = getUserDb();
+  await db.runAsync('DELETE FROM app_meta WHERE key = ?', [NOTIFY_OPTIN_ASKED_KEY]);
 }

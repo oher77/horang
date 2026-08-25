@@ -38,6 +38,7 @@ import {
 import {
   isNotificationsEnabled,
   rescheduleSlotNotifications,
+  resetNotifyOptInAsk,
   scheduleTestNotification,
   setNotificationsEnabled,
 } from '../../lib/notifications';
@@ -231,6 +232,31 @@ function DevToolsSection({ onTestAlarmReset }: { onTestAlarmReset: () => void })
     );
   }, []);
 
+  const handleResetNotifyOptInAsk = useCallback(() => {
+    Alert.alert(
+      '알림 물어보기 기록 삭제',
+      '"알림 켤까?" 화면을 다시 볼 수 있게 물어본 기록을 지웁니다. 알림 켬/끔 설정 자체는 그대로입니다.',
+      [
+        { text: '취소', style: 'cancel' },
+        {
+          text: '삭제',
+          style: 'destructive',
+          onPress: async () => {
+            setBusy(true);
+            try {
+              await resetNotifyOptInAsk();
+              Alert.alert('삭제되었습니다', '조건이 맞으면 홈 화면에 다시 뜹니다.');
+            } catch (err) {
+              Alert.alert('삭제 실패', err instanceof Error ? err.message : String(err));
+            } finally {
+              setBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  }, []);
+
   const handleResetTestAlarm = useCallback(() => {
     Alert.alert(
       '테스트 예약 설정 초기화',
@@ -313,7 +339,15 @@ function DevToolsSection({ onTestAlarmReset }: { onTestAlarmReset: () => void })
         onPress={handleClearTestGateState}
         disabled={busy}
       >
-        <Text style={styles.testButtonText}>오늘 확인 미루기 기록 삭제</Text>
+        <Text style={styles.testButtonText}>오늘 미루기·넘어가기 기록 삭제</Text>
+      </Pressable>
+
+      <Pressable
+        style={[styles.testButton, busy && styles.testButtonDisabled]}
+        onPress={handleResetNotifyOptInAsk}
+        disabled={busy}
+      >
+        <Text style={styles.testButtonText}>알림 물어보기 기록 삭제</Text>
       </Pressable>
 
       <Pressable
