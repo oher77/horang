@@ -55,6 +55,7 @@ import {
   DEFAULT_ALARM_HOUR,
   getTestAlarmConfig,
   isTestAlarmPermissionGranted,
+  resetTestAlarmConfig,
   setTestAlarm,
   type TestAlarmConfig,
 } from '../../lib/testSchedule';
@@ -66,6 +67,10 @@ const LEVEL_OPTIONS: { level: DifficultyLevel; label: string; hint: string }[] =
 ];
 
 export default function SettingsScreen() {
+  // 개발자 도구의 "테스트 예약 설정 초기화"가 app_meta를 직접 지우므로, 이미 마운트된
+  // TestAlarmSection의 로컬 state(스위치·시각)가 옛 값 그대로 남는다. key를 바꿔 통째로
+  // 다시 마운트시켜 화면과 DB를 일치시킨다. __DEV__ 전용 경로라 배포 빌드에선 안 쓰인다.
+  const [alarmSectionKey, setAlarmSectionKey] = useState(0);
   const { level, loaded } = useSettingsStore();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -122,7 +127,7 @@ export default function SettingsScreen() {
 
           <SlotConfigSection />
 
-          <TestAlarmSection />
+          <TestAlarmSection key={alarmSectionKey} />
 
           <NotificationSection />
 
@@ -130,7 +135,9 @@ export default function SettingsScreen() {
 
           <HabitBonusSection />
 
-          {__DEV__ && <DevToolsSection />}
+          {__DEV__ && (
+            <DevToolsSection onTestAlarmReset={() => setAlarmSectionKey((k) => k + 1)} />
+          )}
         </View>
       </TouchableWithoutFeedback>
     </ScrollView>
@@ -146,7 +153,7 @@ export default function SettingsScreen() {
  *   없다 (2026-08-25 추가)
  * - 알림 테스트: 시간대 알림 섹션에 있다가 QA 전용이라 이쪽으로 이동 (2026-07-20)
  */
-function DevToolsSection() {
+function DevToolsSection({ onTestAlarmReset }: { onTestAlarmReset: () => void }) {
   const [busy, setBusy] = useState(false);
 
   const handleTestNotification = useCallback(async () => {
@@ -225,6 +232,35 @@ function DevToolsSection() {
     );
   }, []);
 
+  const handleResetTestAlarm = useCallback(() => {
+    Alert.alert(
+      '테스트 예약 설정 초기화',
+      '켬/끔·시각 설정이 "한 번도 설정한 적 없는" 상태로 돌아갑니다. 한 번 켜면 끄기·시각 변경이 내일부터라 같은 날 되돌릴 수 없는데, 그 우회로입니다(개발 빌드 전용).',
+      [
+        { text: '취소', style: 'cancel' },
+        {
+          text: '초기화',
+          style: 'destructive',
+          onPress: async () => {
+            setBusy(true);
+            try {
+              await resetTestAlarmConfig();
+              onTestAlarmReset();
+              Alert.alert(
+                '초기화되었습니다',
+                `예약이 꺼진 상태가 됐고, 다시 켜면 기본 ${DEFAULT_ALARM_HOUR}시로 즉시 적용됩니다.`,
+              );
+            } catch (err) {
+              Alert.alert('초기화 실패', err instanceof Error ? err.message : String(err));
+            } finally {
+              setBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  }, [onTestAlarmReset]);
+
   const handleClearTestGateState = useCallback(() => {
     Alert.alert(
       '오늘 확인 미루기 기록 삭제',
@@ -279,6 +315,14 @@ function DevToolsSection() {
         disabled={busy}
       >
         <Text style={styles.testButtonText}>오늘 확인 미루기 기록 삭제</Text>
+      </Pressable>
+
+      <Pressable
+        style={[styles.testButton, busy && styles.testButtonDisabled]}
+        onPress={handleResetTestAlarm}
+        disabled={busy}
+      >
+        <Text style={styles.testButtonText}>테스트 예약 설정 초기화</Text>
       </Pressable>
 
       <Pressable

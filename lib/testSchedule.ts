@@ -24,7 +24,7 @@ import { getTodayTestSession, hasTestPool } from './reviewQueries';
 
 export const SNOOZE_LIMIT = 3;
 export const SNOOZE_MINUTES = 30;
-export const DEFAULT_ALARM_HOUR = 20;
+export const DEFAULT_ALARM_HOUR = 22;
 
 export type TestAlarmConfig = {
   enabled: boolean;
@@ -293,6 +293,22 @@ export async function isTestAlarmPermissionGranted(): Promise<boolean> {
  * 이게 없으면 실기기 QA에서 미루기(snooze)를 SNOOZE_LIMIT(3)회 쓰는 순간
  * canSnooze가 false로 굳어 그날은 덮개를 다시 볼 수 없다.
  */
+/**
+ * 예약 설정(켬/끔·시각·pending)을 통째로 지워 **"한 번도 설정한 적 없는" 상태**로 되돌린다.
+ * `__DEV__` QA 전용 — 설정 화면의 개발자 도구에서만 부른다.
+ *
+ * 필요한 이유: setTestAlarm()의 비대칭(켜기는 즉시, 끄기·시각 변경은 내일부터) 때문에
+ * **한 번 켜면 같은 날 안에는 되돌릴 수 없다** — current.enabled가 계속 true라
+ * isTurningOn이 오늘은 영영 false다. 그 비대칭은 회피를 막는 제품 설계이므로 손대지 않고,
+ * 대신 개발 빌드에만 우회로를 둔다. 미루기·넘어가기 기록은 clearTodayTestGateState() 담당.
+ */
+export async function resetTestAlarmConfig(): Promise<void> {
+  await deleteMeta([...CONFIG_KEYS]);
+
+  const { rescheduleSlotNotifications } = await import('./notifications');
+  await rescheduleSlotNotifications();
+}
+
 export async function clearTodayTestGateState(): Promise<void> {
   await deleteMeta([KEY_SNOOZE_DAY, KEY_SNOOZE_COUNT, KEY_SNOOZE_UNTIL_MS, KEY_SKIP_DAY]);
 
