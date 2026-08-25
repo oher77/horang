@@ -16,13 +16,11 @@
  * 이 파일이 export하는 함수만 호출한다.
  */
 
-import * as Notifications from 'expo-notifications';
-
 import { getUserDb } from './db';
 import { todayEpochDay } from './dates';
 import { getTodayTestSession, hasTestPool } from './reviewQueries';
 
-export const SNOOZE_LIMIT = 3;
+export const SNOOZE_LIMIT = 1;
 export const SNOOZE_MINUTES = 30;
 export const DEFAULT_ALARM_HOUR = 22;
 
@@ -140,11 +138,14 @@ export async function getTestAlarmConfig(): Promise<TestAlarmConfig> {
  * 호출 끝에 반드시 rescheduleSlotNotifications()를 기다린다(순환 import 방지를
  * 위해 함수 내부에서 동적 import — 아래 "순환 import" 설명 참고).
  *
- * 켜는 방향(isTurningOn)이면 알림 권한을 요청한다(lib/notifications.ts의
- * setNotificationsEnabled와 동일한 흐름 참고). 단 권한이 거부돼도 예약 자체는
- * 켜진다 — 덮개는 앱을 열면 뜨므로 기능이 죽지 않는다, 알림만 안 갈 뿐이다.
- * 권한 획득 여부가 필요한 호출자는 이 함수 호출 전/후로 별도 export
- * requestTestAlarmPermission()을 쓸 수 있다(아래).
+ * 여기서는 알림 권한을 요청하지 않는다(2026-08-25 변경) — 테스트 타임 알림은
+ * 이제 notifications_enabled(시간대 알림) 스위치에 종속되므로, 그 스위치를 켤 때
+ * lib/notifications.ts의 setNotificationsEnabled가 권한을 요청한다. 덮개 자체는
+ * 알림 권한과 무관하게 앱을 열면 뜨므로 여기서 권한 팝업을 띄우는 건 목적 없는
+ * 방해다. 이 파일은 이제 알림 권한을 아예 다루지 않는다 — 권한을 조회하던
+ * isTestAlarmPermissionGranted()도 함께 삭제했다. 그 함수의 유일한 용도가
+ * "권한이 꺼져 알림이 안 갈 수 있다"는 설정 화면 안내였는데, 그 안내 자체가
+ * 이 변경으로 사라졌기 때문이다(남겨두면 삭제한 안내를 되살리도록 유인한다).
  */
 export async function setTestAlarm(next: { enabled: boolean; hour: number }): Promise<TestAlarmConfig> {
   const current = await getTestAlarmConfig();
@@ -153,13 +154,7 @@ export async function setTestAlarm(next: { enabled: boolean; hour: number }): Pr
   const isTurningOn = !current.enabled && next.enabled;
 
   if (isTurningOn) {
-    // 켜기: 즉시 적용, pending 제거. 권한 요청은 결과와 무관하게 예약을 막지 않는다.
-    try {
-      await Notifications.requestPermissionsAsync();
-    } catch (err) {
-      console.warn('[testSchedule] 알림 권한 요청 실패', err);
-    }
-
+    // 켜기: 즉시 적용, pending 제거.
     await writeMeta([
       [KEY_ENABLED, '1'],
       [KEY_HOUR, String(next.hour)],
@@ -270,27 +265,12 @@ export async function skipTestToday(): Promise<void> {
 }
 
 /**
- * 현재 알림 권한 승인 여부만 확인한다(요청하지 않음). setTestAlarm()이 이미
- * 켜는 방향에서 자체적으로 권한을 요청하므로 필수 호출은 아니지만, 호출자가
- * "권한이 거부돼서 알림이 안 갈 수 있다"는 안내를 UI에 보여주고 싶을 때 쓴다.
- */
-export async function isTestAlarmPermissionGranted(): Promise<boolean> {
-  try {
-    const result = await Notifications.getPermissionsAsync();
-    return result.granted;
-  } catch (err) {
-    console.warn('[testSchedule] 알림 권한 조회 실패', err);
-    return false;
-  }
-}
-
-/**
  * __DEV__ 전용 QA 도구. 오늘의 미루기·넘어가기 기록만 지운다 — 예약 설정
  * (test_alarm_enabled/test_alarm_hour/pending 3키)은 절대 건드리지 않는다
  * (lib/habitQueries.ts의 deleteTodaySlotRecords()와 동일한 관행: __DEV__
  * 전용이라 감수하는 범위를 명확히 좁게 잡는다).
  *
- * 이게 없으면 실기기 QA에서 미루기(snooze)를 SNOOZE_LIMIT(3)회 쓰는 순간
+ * 이게 없으면 실기기 QA에서 미루기(snooze)를 SNOOZE_LIMIT(1)회 쓰는 순간
  * canSnooze가 false로 굳어 그날은 덮개를 다시 볼 수 없다.
  */
 /**

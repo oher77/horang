@@ -109,14 +109,14 @@ async function scheduleSlotAt(target: Date, slotIndex: number): Promise<void> {
 }
 
 /**
- * 예약 테스트 알림 문구. "테스트/시험/점수"라는 단어를 쓰지 않는다 — 시험을
- * 연상시키지 않기 위함(작업 지시 가드레일, 딸 피드백 기반).
+ * 예약 테스트 알림 문구. 슬롯 알림(scheduleSlotAt)과 같은 형식(title 고정 +
+ * body에 상황 설명)을 쓴다.
  */
 async function scheduleTestAlarmAt(target: Date): Promise<void> {
   await Notifications.scheduleNotificationAsync({
     content: {
-      title: '오늘 단어 확인할 시간이야',
-      body: '틀려도 아무 일 없어. 몇 개 남았나만 보자.',
+      title: '호랑잉글리시 🐯',
+      body: '테스트 타임! 오늘 테스트 시간이 됐어요',
       sound: true,
     },
     trigger: {
@@ -140,13 +140,17 @@ async function scheduleTestAlarmAt(target: Date): Promise<void> {
  *   1건(내일은 새 날이므로 오늘 done/skipped여도 내일은 알려야 한다).
  *   enabled === false면 없음.
  *
- * notifications_enabled(슬롯 알림)와는 독립 — 슬롯 알림이 꺼져 있어도 테스트
- * 예약이 켜져 있으면 알림이 간다.
+ * notifications_enabled(시간대 알림) 스위치에 종속된다 — 시간대 알림이 꺼져
+ * 있으면 테스트 예약이 켜져 있어도 알림은 가지 않는다(2026-08-25, 알림 스위치를
+ * 한 곳으로 모으기 위함). 테스트 타임 자체(홈 화면 덮개)는 이 스위치와 무관하게
+ * 계속 동작한다 — 영향받는 건 알림 발송 여부뿐이다.
  *
  * notifications.ts ↔ testSchedule.ts 순환 import 방지를 위해 동적 import를
  * 쓴다(testSchedule.ts도 이 파일을 동적 import로만 참조한다).
  */
 async function scheduleTestAlarmIfDue(): Promise<void> {
+  if (!(await isNotificationsEnabled())) return;
+
   const { getTestAlarmConfig, getTestGateState } = await import('./testSchedule');
   const config = await getTestAlarmConfig();
   const gate = await getTestGateState();
@@ -232,9 +236,10 @@ export async function rescheduleSlotNotifications(): Promise<void> {
     console.warn('[notifications] 재예약 실패', err);
   }
 
-  // notifications_enabled와 독립적으로, 예약 테스트 알림은 항상 별도 판정한다.
-  // 위 블록에서 cancelAllScheduledNotificationsAsync()가 이미 실행됐으므로(비활성
-  // 경로 포함) 여기서 새로 추가하는 것만으로 최신 상태가 된다.
+  // 예약 테스트 알림은 별도 함수에서 판정하되 notifications_enabled 가드는 그
+  // 함수 내부(scheduleTestAlarmIfDue)에 있다. 위 블록에서
+  // cancelAllScheduledNotificationsAsync()가 이미 실행됐으므로(비활성 경로 포함)
+  // 여기서 새로 추가하는 것만으로 최신 상태가 된다.
   try {
     await scheduleTestAlarmIfDue();
   } catch (err) {

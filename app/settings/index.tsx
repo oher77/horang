@@ -54,7 +54,6 @@ import {
   clearTodayTestGateState,
   DEFAULT_ALARM_HOUR,
   getTestAlarmConfig,
-  isTestAlarmPermissionGranted,
   resetTestAlarmConfig,
   setTestAlarm,
   type TestAlarmConfig,
@@ -263,7 +262,7 @@ function DevToolsSection({ onTestAlarmReset }: { onTestAlarmReset: () => void })
 
   const handleClearTestGateState = useCallback(() => {
     Alert.alert(
-      '오늘 확인 미루기 기록 삭제',
+      '오늘 미루기·넘어가기 기록 삭제',
       '오늘 사용한 미루기 횟수와 오늘 넘어가기 기록이 삭제됩니다. 예약 설정(켬/끔·시각)은 그대로입니다.',
       [
         { text: '취소', style: 'cancel' },
@@ -274,7 +273,7 @@ function DevToolsSection({ onTestAlarmReset }: { onTestAlarmReset: () => void })
             setBusy(true);
             try {
               await clearTodayTestGateState();
-              Alert.alert('삭제되었습니다', '미루기 3번을 다시 쓸 수 있고, 오늘 넘어가기도 초기화됐습니다.');
+              Alert.alert('삭제되었습니다', '미루기를 다시 쓸 수 있고, 오늘 넘어가기도 초기화됐습니다.');
             } catch (err) {
               Alert.alert('삭제 실패', err instanceof Error ? err.message : String(err));
             } finally {
@@ -515,7 +514,7 @@ function clampHour(hour: number): number {
 /**
  * hour 값을 -/+ 버튼으로 조정하는 스테퍼. 키보드를 띄우지 않는다.
  * min/max는 optional — 생략 시 기존 호출부(슬롯 시간대, 0~24)와 동일하게 동작한다.
- * (2026-08-25: 단어 확인 시간 섹션이 0~23 범위로 쓰기 위해 추가 — 상한에서 버튼을
+ * (2026-08-25: 테스트 타임 설정 섹션이 0~23 범위로 쓰기 위해 추가 — 상한에서 버튼을
  * 비활성화해야 "눌리는데 반응 없는" 고장 난 버튼처럼 보이지 않는다.)
  */
 function HourStepper({
@@ -557,11 +556,10 @@ function HourStepper({
 }
 
 /**
- * 단어 확인 시간 섹션 (2026-08-25, 딸 피드백 기반).
+ * 테스트 타임 설정 섹션 (2026-08-25, 딸 피드백 기반).
  *
- * 배경: "버튼을 누르는 결정"이 무서운 것이지 확인 자체가 무서운 게 아니므로,
- * 정한 시각이 되면 홈에 덮개가 떠서 그 결정을 없앤다. 딸이 스스로 자기에게
- * 거는 약속이라 문구에 "시험/테스트/점수/강제"를 쓰지 않는다.
+ * 배경: "버튼을 누르는 결정"이 무서운 것이지 테스트 자체가 무서운 게 아니므로,
+ * 정한 시각이 되면 홈에 덮개가 떠서 그 결정을 없앤다.
  *
  * 켜기는 즉시, 끄기·시각 변경은 내일부터 적용된다(lib/testSchedule.ts의
  * setTestAlarm 참고 — 불안한 순간에 설정으로 도망가는 길을 막는 장치). 화면에
@@ -572,16 +570,14 @@ function TestAlarmSection() {
   const [config, setConfig] = useState<TestAlarmConfig | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [permissionDenied, setPermissionDenied] = useState(false);
   const [sectionError, setSectionError] = useState('');
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([getTestAlarmConfig(), isTestAlarmPermissionGranted()])
-      .then(([cfg, granted]) => {
+    getTestAlarmConfig()
+      .then((cfg) => {
         if (cancelled) return;
         setConfig(cfg);
-        setPermissionDenied(!granted);
         setLoaded(true);
       })
       .catch((err) => {
@@ -605,10 +601,6 @@ function TestAlarmSection() {
     try {
       const result = await setTestAlarm(next);
       setConfig(result);
-      if (next.enabled) {
-        const granted = await isTestAlarmPermissionGranted();
-        setPermissionDenied(!granted);
-      }
     } catch (err) {
       setSectionError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -636,21 +628,23 @@ function TestAlarmSection() {
 
   return (
     <View style={styles.incomeSection}>
-      <Text style={styles.sectionTitle}>단어 확인 시간</Text>
+      <Text style={styles.sectionTitle}>테스트 타임 설정</Text>
       <Text style={styles.sectionDesc}>
-        정한 시각이 되면 홈 화면에 떠요. 바로 하기 어려우면 30분씩 세 번까지 미룰 수 있어요.{'\n'}
-        <Text style={styles.sectionDescSub}>켜는 건 바로, 끄거나 시각을 바꾸는 건 내일부터 적용돼요.</Text>
+        정한 시각이 되면 홈 화면에 떠요. 바로 하기 어려우면 30분 한 번 미룰 수 있어요.{'\n'}
+        <Text style={styles.sectionDescSub}>
+          켜는 건 바로, 끄거나 시각을 바꾸는 건 내일부터 적용돼요. 알림을 받으려면 아래 ‘시간대 알림’도 켜세요.
+        </Text>
       </Text>
 
       {!loaded && <Text style={styles.optionHint}>불러오는 중…</Text>}
 
       <View style={styles.incomeRow}>
-        <Text style={styles.incomeRowLabel}>정해진 시각에 확인하기</Text>
+        <Text style={styles.incomeRowLabel}>정해진 시각에 테스트하기</Text>
         <Switch value={displayEnabled} onValueChange={handleToggle} disabled={!loaded || busy} />
       </View>
 
       <View style={[styles.slotRow, { marginTop: 10 }, !displayEnabled && styles.rowDimmed]}>
-        <Text style={styles.incomeRowLabel}>확인 시각</Text>
+        <Text style={styles.incomeRowLabel}>테스트 시각</Text>
         <HourStepper
           value={displayHour}
           disabled={!loaded || busy || !displayEnabled}
@@ -665,12 +659,6 @@ function TestAlarmSection() {
           {pending.enabled
             ? `내일부터 ${String(pending.hour).padStart(2, '0')}시로 바뀌어요. 오늘은 지금 설정 그대로예요.`
             : '내일부터 꺼져요. 오늘은 지금 설정 그대로예요.'}
-        </Text>
-      )}
-
-      {displayEnabled && permissionDenied && (
-        <Text style={styles.optionHint}>
-          알림 권한이 꺼져 있어 알려주지는 못하지만, 시각이 되면 앱을 열었을 때 화면에는 떠요.
         </Text>
       )}
 
@@ -726,7 +714,7 @@ function NotificationSection() {
     <View style={styles.incomeSection}>
       <Text style={styles.sectionTitle}>시간대 알림</Text>
       <Text style={styles.sectionDesc}>
-        각 시간대가 시작될 때 알림으로 알려드려요. 이미 완료한 시간대는 알림이 오지 않습니다.
+        각 시간대가 시작될 때, 그리고 테스트 타임이 되면 알림으로 알려드려요. 이미 완료한 시간대는 알림이 오지 않습니다.
       </Text>
 
       <View style={styles.incomeRow}>

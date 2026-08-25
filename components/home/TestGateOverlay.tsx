@@ -205,9 +205,11 @@ export default function TestGateOverlay({ gate, onResolved }: Props) {
                 30분 뒤에 할래
               </Text>
             </Pressable>
+            {/* SNOOZE_LIMIT이 1이라 isLastSnooze는 항상 true — 사실상 상시 노출이며 의도된 동작이다.
+                미루기가 한 번뿐이라는 걸 미루기 전에 알려야 하기 때문. */}
             {isLastSnooze && (
               <Text maxFontSizeMultiplier={1.2} style={styles.hint}>
-                미룰 수 있는 건 이번이 마지막이야.
+                미루는 건 하루에 한 번이야.
               </Text>
             )}
           </>
