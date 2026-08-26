@@ -158,6 +158,34 @@ export async function getTestPool(todayDayId: number): Promise<TestQuestion[]> {
   return questions;
 }
 
+/**
+ * 출제 풀에 단어가 하나라도 있는지(=테스트가 가능한지)만 가볍게 판정한다.
+ * getTestPool()과 달리 오늘 Day가 아직 생성되지 않았어도(ensureTodayDay() 호출 없이)
+ * 판정할 수 있다 — 오늘 생성된 Day가 있으면 그 단어까지, 없으면 복습 대상 Day만으로
+ * 판정한다. lib/testSchedule.ts의 getTestGateState()가 'unavailable' 판정에 재사용한다
+ * (app/test/index.tsx가 ensureTodayDay() 이후 getTestPool()로 'empty'를 판정하는 것과
+ * 동일한 기준 — 오늘 Day가 아직 없을 때만 그 부분이 비어 있을 뿐, 조건 자체는 같다).
+ */
+export async function hasTestPool(): Promise<boolean> {
+  const userDb = getUserDb();
+  const today = todayEpochDay();
+  const reviewDays = daysAgo([...REVIEW_OFFSETS], today);
+  const placeholders = reviewDays.map(() => '?').join(',');
+
+  const row = await userDb.getFirstAsync<{ cnt: number }>(
+    `SELECT COUNT(*) AS cnt
+     FROM (
+       SELECT DISTINCT dw.content_word_id
+       FROM day_word dw
+       JOIN day d ON d.id = dw.day_id
+       WHERE d.created_day = ?
+          OR d.created_day IN (${placeholders})
+     )`,
+    [today, ...reviewDays],
+  );
+  return (row?.cnt ?? 0) > 0;
+}
+
 /** 오늘 이미 치른 테스트 세션 요약 (완료 상태 UI에 점수 표시용). */
 export interface TodayTestSession {
   sessionId: number;

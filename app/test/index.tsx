@@ -20,9 +20,19 @@
  * 기존 구현을 그대로 유지한다.
  */
 
-import { Stack, router } from 'expo-router';
+import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  ActivityIndicator,
+  BackHandler,
+  FlatList,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 
 import ScoreRevealAnimation from '../../components/test/ScoreRevealAnimation';
 import TestRow, { ROW_MIN_HEIGHT } from '../../components/test/TestRow';
@@ -44,6 +54,12 @@ interface GradeState {
 }
 
 export default function TestScreen() {
+  // 예약 테스트 덮개(홈)에서 `locked=1`로 들어온 경우에만 이탈을 잠근다. 딸이
+  // 직접 홈 메뉴 버튼으로 들어온 경우는 이미 스스로 결정한 것이라 가둘 이유가
+  // 없고, 실수로 들어갔다 갇히면 억울하다.
+  const { locked } = useLocalSearchParams<{ locked?: string }>();
+  const isLockedEntry = locked === '1';
+
   const [state, setState] = useState<LoadState>('loading');
   const [error, setError] = useState<string | null>(null);
   const [questions, setQuestions] = useState<TestQuestion[]>([]);
@@ -317,6 +333,33 @@ export default function TestScreen() {
 
   const headerLabel = useMemo(() => (phase === 'grading' ? '문제 / 답' : '문제 / 채점'), [phase]);
 
+  // 이탈 잠금 — `locked=1`로 들어온 경우에만, grading/graded 구간에서만 걸린다.
+  // revealing/result는 별도 return 블록이라 이 옵션의 영향을 받지 않는다(그 두
+  // phase는 원래도 headerBackVisible: false지만 gestureEnabled는 기본값 그대로다).
+  //
+  // `state === 'ready'`가 조건에 붙어야 하는 이유: 아래 메인 return 블록은
+  // loading/ready/empty/error를 전부 렌더하는데 phase 초깃값이 'grading'이라,
+  // 이게 없으면 출제 풀이 비거나(empty) 로딩이 실패했을 때(error) 뒤로가기가
+  // 사라진 화면에 갇힌다 — 탈출구가 앱 강제 종료뿐이 되는데, 그러면 회피가
+  // 버튼에서 앱 전체로 옮겨간다(이 기능이 막으려던 바로 그 실패 양상이다).
+  // `result === null` 조건: 이 잠금의 목적은 "한 번 끝까지 하게 만드는 것"이고,
+  // saveTestSession()이 성공해 setResult(...)가 불린 시점(handleAnimationComplete)에
+  // 그 목적은 이미 달성됐다. result는 그 뒤 handleRegrade에서도 비워지지 않으므로
+  // "result !== null"은 곧 "오늘 몫은 이미 제출됐다"는 뜻 — 재채점(graded로 복귀)
+  // 중에도 이 값을 그대로 참조할 수 있다. 저장이 끝난 뒤에도 계속 붙잡아두면
+  // 잠금이 목적을 잃고 순수한 감금이 되는데, 그러면 회피가 버튼에서 앱 강제
+  // 종료로 옮겨간다 — 이 기능이 애초에 막으려던 바로 그 실패 양상이다.
+  const isLockPhase = phase === 'grading' || phase === 'graded';
+  const shouldLock = isLockedEntry && isLockPhase && state === 'ready' && result === null;
+
+  // Android 하드웨어 백 — 잠금 중에는 이벤트를 소비해 기본 동작(화면 나가기)을 막는다.
+  // 잠금이 아닐 때는 등록하지 않아(또는 false 반환) 원래 백 동작이 그대로 살아난다.
+  useEffect(() => {
+    if (!shouldLock) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => true);
+    return () => sub.remove();
+  }, [shouldLock]);
+
   if (phase === 'revealing') {
     return (
       <View style={styles.container}>
@@ -329,7 +372,19 @@ export default function TestScreen() {
   if (phase === 'result' && result) {
     return (
       <View style={styles.container}>
-        <Stack.Screen options={{ title: '테스트 결과', headerBackVisible: false }} />
+        {/* result는 이미 저장이 끝난 뒤라 잠금 목적이 달성된 상태 — 뒤로가기를
+            되살려야 한다. headerBackVisible: true만 켜면 메인 블록 렌더에서
+            남은 headerLeft: () => null이 화살표 자리를 계속 덮으므로(옵션은
+            navigation.setOptions 병합이라 명시하지 않은 키는 이전 값이 남는다)
+            세 키를 전부 명시적으로 되돌린다. */}
+        <Stack.Screen
+          options={{
+            title: '테스트 결과',
+            headerBackVisible: true,
+            headerLeft: undefined,
+            gestureEnabled: true,
+          }}
+        />
         <View style={styles.resultContainer}>
           <View style={styles.scoreCard}>
             <Text style={styles.scoreLabel}>이번 테스트 점수</Text>
@@ -357,7 +412,16 @@ export default function TestScreen() {
 
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: '테스트' }} />
+      <Stack.Screen
+        options={{
+          title: '테스트',
+          // 헤더 뒤로가기 버튼 숨김 — 버튼이 안 보이는 것 자체가 가장 명확한 신호다.
+          headerBackVisible: !shouldLock,
+          headerLeft: shouldLock ? () => null : undefined,
+          // iOS 스와이프 백 제스처 차단.
+          gestureEnabled: !shouldLock,
+        }}
+      />
 
       {state === 'loading' && <ActivityIndicator style={styles.loading} />}
 
