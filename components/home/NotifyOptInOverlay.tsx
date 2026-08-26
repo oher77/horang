@@ -46,11 +46,7 @@ interface Props {
 // fontSize와 같게 두면 iOS가 베이스라인을 재배치해 글자가 아래로 밀리므로
 // (lib/fonts.ts 기록된 실제 사고) 반드시 lineHeightEm을 곱해 명시한다.
 const TITLE_FONT_SIZE = 28;
-const BODY_FONT_SIZE = 20;
 const BUTTON_FONT_SIZE = 24;
-
-/** 제목 글자색. 크림 배경(#fffaf0) 위 대비 약 7:1로 본문 기준을 넘는다. */
-const TITLE_BROWN = '#6b4423';
 
 export default function NotifyOptInOverlay({ onResolved }: Props) {
   const insets = useSafeAreaInsets();
@@ -107,9 +103,6 @@ export default function NotifyOptInOverlay({ onResolved }: Props) {
         <Text maxFontSizeMultiplier={1.2} style={styles.title}>
           {'전구 미션이 열릴 때랑\n테스트 타임에 알림을\n보내줄까요?'}
         </Text>
-        <Text maxFontSizeMultiplier={1.2} style={styles.body}>
-          계속 조르지는 않아요.
-        </Text>
 
         <Pressable
           style={[styles.button, styles.primaryButton, busy && styles.buttonDisabled]}
@@ -162,14 +155,8 @@ const styles = StyleSheet.create({
     fontSize: TITLE_FONT_SIZE,
     lineHeight: TITLE_FONT_SIZE * HANDWRITING_METRICS.lineHeightEm,
     fontFamily: HANDWRITING_FONT,
-    color: TITLE_BROWN,
-    textAlign: 'center',
-  },
-  body: {
-    marginTop: 10,
-    fontSize: BODY_FONT_SIZE,
-    lineHeight: BODY_FONT_SIZE * HANDWRITING_METRICS.lineHeightEm,
-    fontFamily: HANDWRITING_FONT,
+    // 이 덮개는 이제 한 문장뿐이라 강조색을 쓰지 않는다 — 색으로 위계를 만들
+    // 대상이 없다. 본문에 쓰던 회색을 그대로 쓴다.
     color: '#555',
     textAlign: 'center',
   },

@@ -113,7 +113,7 @@ async function scheduleSlotAt(target: Date, slotIndex: number): Promise<void> {
   await Notifications.scheduleNotificationAsync({
     content: {
       title: '호랑잉글리시 🐯',
-      body: `전구 미션 타임! 오늘 ${slotOrdinal(slotIndex)}번째 전구가 열렸어요`,
+      body: `${slotOrdinal(slotIndex)}번째 전구가 열렸어요`,
       sound: true,
     },
     trigger: {
