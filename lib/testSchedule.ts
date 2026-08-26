@@ -139,7 +139,7 @@ export async function getTestAlarmConfig(): Promise<TestAlarmConfig> {
  * 위해 함수 내부에서 동적 import — 아래 "순환 import" 설명 참고).
  *
  * 여기서는 알림 권한을 요청하지 않는다(2026-08-25 변경) — 테스트 타임 알림은
- * 이제 notifications_enabled(시간대 알림) 스위치에 종속되므로, 그 스위치를 켤 때
+ * 이제 notifications_enabled(전구 미션 알림) 스위치에 종속되므로, 그 스위치를 켤 때
  * lib/notifications.ts의 setNotificationsEnabled가 권한을 요청한다. 덮개 자체는
  * 알림 권한과 무관하게 앱을 열면 뜨므로 여기서 권한 팝업을 띄우는 건 목적 없는
  * 방해다. 이 파일은 이제 알림 권한을 아예 다루지 않는다 — 권한을 조회하던

@@ -9,11 +9,13 @@
  * app_meta 키 불필요). lib/settings.ts의 모듈 싱글턴 스토어로 전역 반영.
  */
 
-import { Stack } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { Stack, useLocalSearchParams } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
+  AppState,
   Keyboard,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -75,6 +77,33 @@ export default function SettingsScreen() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // 홈의 알림 옵트인 덮개가 { pathname: '/settings', params: { focus: 'notifications' } }로
+  // 딥링크한다 — 파라미터 이름/값은 고정 계약. 도착 시 알림 섹션까지 스크롤 + 하이라이트.
+  const { focus } = useLocalSearchParams<{ focus?: string }>();
+  const scrollRef = useRef<ScrollView>(null);
+  const [notifySectionY, setNotifySectionY] = useState<number | null>(null);
+  const [notifyHighlight, setNotifyHighlight] = useState(false);
+  const didScrollToNotifyRef = useRef(false);
+
+  useEffect(() => {
+    if (focus !== 'notifications') return;
+    if (notifySectionY === null) return;
+    if (didScrollToNotifyRef.current) return;
+    didScrollToNotifyRef.current = true;
+
+    // contentContainer padding(20)만큼 섹션이 이미 안쪽으로 밀려 그려지지만, onLayout의
+    // y는 형제 View들 간 상대좌표(같은 padded 컨테이너 기준)라 padding을 다시 더하지
+    // 않는다 — styles.contentContainer의 padding: 20 확인 완료.
+    scrollRef.current?.scrollTo({ y: Math.max(0, notifySectionY - 16), animated: true });
+    setNotifyHighlight(true);
+  }, [focus, notifySectionY]);
+
+  useEffect(() => {
+    if (!notifyHighlight) return;
+    const timer = setTimeout(() => setNotifyHighlight(false), 2500);
+    return () => clearTimeout(timer);
+  }, [notifyHighlight]);
+
   const handleSelect = useCallback(async (next: DifficultyLevel) => {
     if (next === level) return;
     setSaving(true);
@@ -90,6 +119,7 @@ export default function SettingsScreen() {
 
   return (
     <ScrollView
+      ref={scrollRef}
       style={styles.container}
       contentContainerStyle={styles.contentContainer}
       keyboardShouldPersistTaps="handled"
@@ -129,7 +159,7 @@ export default function SettingsScreen() {
 
           <TestAlarmSection key={alarmSectionKey} />
 
-          <NotificationSection />
+          <NotificationSection onLayoutY={setNotifySectionY} highlight={notifyHighlight} />
 
           <IncomeRulesSection />
 
@@ -151,7 +181,7 @@ export default function SettingsScreen() {
  * - 오늘 슬롯 기록 삭제: "슬롯당 1회" 제약이 DB UNIQUE라 화면 조작으로 우회가 안 되고,
  *   한 번 채우면 다음 시간대까지(최대 5시간) 전구 점등·배너·동전·연쇄 버튼을 다시 볼 수
  *   없다 (2026-08-25 추가)
- * - 알림 테스트: 시간대 알림 섹션에 있다가 QA 전용이라 이쪽으로 이동 (2026-07-20)
+ * - 알림 테스트: 전구 미션 알림 섹션에 있다가 QA 전용이라 이쪽으로 이동 (2026-07-20)
  */
 function DevToolsSection({ onTestAlarmReset }: { onTestAlarmReset: () => void }) {
   const [busy, setBusy] = useState(false);
@@ -235,7 +265,8 @@ function DevToolsSection({ onTestAlarmReset }: { onTestAlarmReset: () => void })
   const handleResetNotifyOptInAsk = useCallback(() => {
     Alert.alert(
       '알림 물어보기 기록 삭제',
-      '"알림 켤까?" 화면을 다시 볼 수 있게 물어본 기록을 지웁니다. 알림 켬/끔 설정 자체는 그대로입니다.',
+      '"알림 켤까?" 화면을 다시 볼 수 있게 물어본 기록을 지웁니다. 알림 켬/끔 설정 자체는 그대로입니다.\n\n' +
+        '노출 조건: 오늘 앞 시간대를 전부 놓치고 마지막 시간대에 와서야 단어장을 처음 훑은 날, 홈으로 돌아왔을 때 뜹니다 — 이 기록을 지워야 그 조건을 다시 재현해 QA할 수 있습니다.',
       [
         { text: '취소', style: 'cancel' },
         {
@@ -245,7 +276,10 @@ function DevToolsSection({ onTestAlarmReset }: { onTestAlarmReset: () => void })
             setBusy(true);
             try {
               await resetNotifyOptInAsk();
-              Alert.alert('삭제되었습니다', '조건이 맞으면 홈 화면에 다시 뜹니다.');
+              Alert.alert(
+                '삭제되었습니다',
+                '오늘 앞 시간대를 전부 놓치고 마지막 시간대에 단어장을 처음 훑은 뒤 홈으로 돌아오면 다시 뜹니다.',
+              );
             } catch (err) {
               Alert.alert('삭제 실패', err instanceof Error ? err.message : String(err));
             } finally {
@@ -666,7 +700,7 @@ function TestAlarmSection() {
       <Text style={styles.sectionDesc}>
         정한 시각이 되면 홈 화면에 떠요. 바로 하기 어려우면 30분 한 번 미룰 수 있어요.{'\n'}
         <Text style={styles.sectionDescSub}>
-          켜는 건 바로, 끄거나 시각을 바꾸는 건 내일부터 적용돼요. 알림을 받으려면 아래 ‘시간대 알림’도 켜세요.
+          켜는 건 바로, 끄거나 시각을 바꾸는 건 내일부터 적용돼요. 알림을 받으려면 아래 ‘전구 미션 알림’도 켜세요.
         </Text>
       </Text>
 
@@ -704,12 +738,29 @@ function TestAlarmSection() {
 /**
  * 시간대 미션 알림 섹션 (설계.md §7.6, 2026-07-09 구현).
  * 스위치로 켬/끔(app_meta.notifications_enabled 영속) + 테스트 알림 버튼.
- * 권한 거부 시 스위치를 원위치로 되돌리고 Alert로 설정 앱 안내를 띄운다.
+ * 권한 거부 시 iOS 설정 앱의 앱 페이지로 데려가고(2026-08-26), 돌아와서 권한이
+ * 실제로 생기면 스위치를 자동으로 켠다.
+ *
+ * onLayoutY/highlight: 홈의 알림 옵트인 덮개가 이 섹션으로 딥링크할 때
+ * 부모(SettingsScreen)가 스크롤·하이라이트하기 위해 쓰는 optional 훅.
  */
-function NotificationSection() {
+function NotificationSection({
+  onLayoutY,
+  highlight,
+}: {
+  onLayoutY?: (y: number) => void;
+  highlight?: boolean;
+}) {
   const [enabled, setEnabled] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  // 권한을 요청했다가 거부된 상태에서 사용자가 설정 앱에 다녀왔는지를 기억하는
+  // "의사(wanted)" 플래그. 여기 담는 건 앱 스위치 값이 아니라 의도뿐이다 —
+  // 권한이 없는데 스위치만 미리 켜두면 "켰는데 알림이 안 오는" 거짓말하는
+  // 스위치가 되므로, 실제 저장(setNotificationsEnabled)은 권한이 실제로
+  // 생겼을 때만 한다. 메모리 전용이라 앱 재시작 시 소실되는 건 의도된 동작.
+  const wantedRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -728,14 +779,52 @@ function NotificationSection() {
     };
   }, []);
 
+  // 설정 앱에서 알림을 허용하고 앱으로 돌아왔을 때, 의사(wantedRef)가 남아있으면
+  // 저장을 한 번 더 시도한다. 권한이 여전히 없으면 팝업 없이 즉시 false가
+  // 돌아오므로(iOS 팝업은 생애 1회) 사용자에게 아무 방해가 없고, 다음 복귀에
+  // 또 시도된다.
+  useEffect(() => {
+    let cancelled = false;
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      if (!wantedRef.current) return;
+      setNotificationsEnabled(true)
+        .then((result) => {
+          if (cancelled) return;
+          if (result) {
+            setEnabled(true);
+            wantedRef.current = false;
+          }
+        })
+        .catch(() => {
+          // 실패해도 wantedRef를 유지 — 다음 복귀에 다시 시도.
+        });
+    });
+    return () => {
+      cancelled = true;
+      subscription.remove();
+    };
+  }, []);
+
   const handleToggle = useCallback(async (next: boolean) => {
+    if (!next) {
+      wantedRef.current = false;
+    }
     setEnabled(next); // 즉시 반영(낙관적 갱신)
     setBusy(true);
     try {
       const result = await setNotificationsEnabled(next);
       setEnabled(result);
       if (next && !result) {
-        Alert.alert('알림 권한이 필요해요', '설정 앱에서 알림을 허용해주세요.');
+        wantedRef.current = true;
+        Alert.alert(
+          '알림 권한이 필요해요',
+          'iOS 설정에서 호랑잉글리시 알림을 허용해야 알림을 보낼 수 있어요. 허용하고 돌아오면 자동으로 켜져요.',
+          [
+            { text: '나중에', style: 'cancel' },
+            { text: '설정 열기', onPress: () => { Linking.openSettings().catch(() => {}); } },
+          ],
+        );
       }
     } catch {
       setEnabled(!next); // 실패 시 원위치
@@ -745,8 +834,11 @@ function NotificationSection() {
   }, []);
 
   return (
-    <View style={styles.incomeSection}>
-      <Text style={styles.sectionTitle}>시간대 알림</Text>
+    <View
+      style={[styles.incomeSection, highlight && styles.sectionHighlight]}
+      onLayout={onLayoutY ? (e) => onLayoutY(e.nativeEvent.layout.y) : undefined}
+    >
+      <Text style={styles.sectionTitle}>전구 미션 알림</Text>
       <Text style={styles.sectionDesc}>
         각 시간대가 시작될 때, 그리고 테스트 타임이 되면 알림으로 알려드려요. 이미 완료한 시간대는 알림이 오지 않습니다.
       </Text>
@@ -1084,6 +1176,16 @@ const styles = StyleSheet.create({
   },
   incomeSection: {
     marginTop: 36,
+  },
+  // 딥링크로 도착했을 때 2.5초간 켜지는 표식. 테두리+padding이 아니라 배경 틴트만
+  // 쓰는 이유: padding을 넣으면 하이라이트가 켜지고 꺼질 때 섹션 높이가 변해 아래
+  // 내용이 출렁인다. 좌우는 음수 마진으로 넓힌 만큼 padding으로 되밀어 글자 위치가
+  // 그대로다 — 레이아웃 이동이 양쪽 축 모두 0이다.
+  sectionHighlight: {
+    backgroundColor: '#fff1e0',
+    borderRadius: 12,
+    marginHorizontal: -12,
+    paddingHorizontal: 12,
   },
   incomeRows: {
     marginTop: 16,

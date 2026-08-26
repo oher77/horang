@@ -17,11 +17,24 @@
 import * as Notifications from 'expo-notifications';
 
 import { getUserDb } from './db';
-import { getSlotConfig, getTodaySlots, hasCompletedAnySession } from './habitQueries';
+import { todayEpochDay } from './dates';
+import { getSlotConfig, getTodaySlots, isLateFirstTouchToday } from './habitQueries';
 
 const NOTIFICATIONS_ENABLED_KEY = 'notifications_enabled';
-/** 홈 알림 opt-in 덮개를 이미 물어봤는지('1'|없음). 사용자가 어느 버튼을 골랐든 저장된다. */
-const NOTIFY_OPTIN_ASKED_KEY = 'notify_optin_asked';
+/**
+ * 홈 알림 opt-in 덮개를 오늘 이미 물어봤는지 — 값은 물어본 날의 epoch day 문자열
+ * (2026-08-26 개편). 옛 키 'notify_optin_asked'(값 '1', 생애 1회)를 대체한다 —
+ * 값의 의미가 "생애 1회 여부"에서 "오늘 물어봤는가"로 바뀌었으므로 문자열을
+ * 재사용하지 않고 새 키를 쓴다. 옛 키는 resetNotifyOptInAsk()에서 청소만 한다
+ * (딸 기기에 이미 남아 있는 잔여물).
+ */
+const NOTIFY_OPTIN_ASKED_DAY_KEY = 'notify_optin_asked_day';
+/** 옛 키(생애 1회 방식) — 더 이상 쓰지 않지만 QA 리셋 시 함께 지운다. */
+const LEGACY_NOTIFY_OPTIN_ASKED_KEY = 'notify_optin_asked';
+/** [괜찮아]를 **연속** 몇 번 골랐는가(정수 문자열). [그래]를 고르면 '0'으로 끊긴다. */
+const NOTIFY_OPTIN_DECLINE_STREAK_KEY = 'notify_optin_decline_streak';
+/** 연속 거절 상한 — 여기 닿으면 덮개를 더 띄우지 않는다(설정 스위치는 그대로 남는다). */
+const DECLINE_STREAK_LIMIT = 3;
 
 /** 포그라운드 수신 시에도 배너/목록에 표시 + 소리(설계 요구사항). 모듈 로드 시 1회 설정. */
 Notifications.setNotificationHandler({
@@ -100,7 +113,7 @@ async function scheduleSlotAt(target: Date, slotIndex: number): Promise<void> {
   await Notifications.scheduleNotificationAsync({
     content: {
       title: '호랑잉글리시 🐯',
-      body: `인출 타임! 오늘 ${slotOrdinal(slotIndex)}번째 미션 시간이 열렸어요`,
+      body: `전구 미션 타임! 오늘 ${slotOrdinal(slotIndex)}번째 전구가 열렸어요`,
       sound: true,
     },
     trigger: {
@@ -142,7 +155,7 @@ async function scheduleTestAlarmAt(target: Date): Promise<void> {
  *   1건(내일은 새 날이므로 오늘 done/skipped여도 내일은 알려야 한다).
  *   enabled === false면 없음.
  *
- * notifications_enabled(시간대 알림) 스위치에 종속된다 — 시간대 알림이 꺼져
+ * notifications_enabled(전구 미션 알림) 스위치에 종속된다 — 그 알림이 꺼져
  * 있으면 테스트 예약이 켜져 있어도 알림은 가지 않는다(2026-08-25, 알림 스위치를
  * 한 곳으로 모으기 위함). 테스트 타임 자체(홈 화면 덮개)는 이 스위치와 무관하게
  * 계속 동작한다 — 영향받는 건 알림 발송 여부뿐이다.
@@ -280,39 +293,138 @@ export async function scheduleTestNotification(): Promise<boolean> {
 }
 
 /**
- * 홈 알림 opt-in 덮개 (첫 세션 직후 "알림 켤까?") — 관련 함수 3개.
+ * 홈 알림 opt-in 덮개 — 관련 함수 4개.
  *
+ * ── 왜 "실패 직후"인가 (2026-08-26 개편, 그 전엔 "첫 세션 성공 직후") ──────────
+ * 세션을 성공한 직후에 물으면 사용자는 "알림 없어도 되네"라고 학습한다(방금 알림
+ * 없이 해냈으므로). 알림의 필요성을 실제로 느끼는 순간은 시간대를 놓쳐 실패를
+ * 경험한 직후다 — 그래서 노출 조건을 isLateFirstTouchToday()(오늘 처음 손댄
+ * 시간대가 마지막 시간대 = 앞 시간대를 전부 놓침)로 바꿨다.
+ *
+ * ── 왜 매일 다시 묻는가 (생애 1회가 아니라 하루 1회) ────────────────────────
+ * "놓친 날"은 하루하루 독립된 사건이다 — 어제 놓쳐서 물었는데 "괜찮아"를 골랐어도,
+ * 오늘 또 놓쳤다면 오늘의 실패는 오늘 다시 물을 값어치가 있다. 생애 1회로 묶으면
+ * 첫 실패 때 "괜찮아"를 고른 사용자는 이후 아무리 놓쳐도 다시는 제안을 못 받는다.
+ *
+ * ── 다만 연속 3회 거절하면 멈춘다 (DECLINE_STREAK_LIMIT) ────────────────────
+ * 하루 1회는 평균적으로 드물게 뜨지만(네 조건이 동시에 맞아야 한다) 꼬리가 나쁘다:
+ * 계속 거절하면서 늦는 날이 이어지면 그 날마다 전체화면 덮개가 뜬다. 그러면
+ * **무시해도 계속 오면 무시하는 습관이 붙는다**는 원리가 알림이 아니라 우리 덮개
+ * 자신에게 적용돼, 덮개가 "닫는 버튼"이 되고 정작 켜야 할 날에도 반사적으로
+ * [괜찮아]를 누르게 된다. 그래서 연속 거절을 세어 상한에서 멈춘다 — 설정 화면
+ * 스위치는 그대로 남으므로 길이 막히는 게 아니라 **먼저 말 거는 것만** 그만둔다.
+ * [그래]를 고르면 연속이 끊겨 0으로 돌아간다(거절이 아니므로). [그래]를 골랐는데
+ * 권한이 결국 안 켜진 경우는 계속 물어볼 수 있는데, 그건 조르는 게 아니라 돕는
+ * 것이다 — 사용자가 원한다고 말했고 실패는 다른 데서 났기 때문이다.
+ *
+ * ── iOS 팝업은 생애 1회, 우리 질문은 그렇지 않다 — 그래서 두 갈래로 갈린다 ─────
  * iOS 권한 팝업은 앱 생애 딱 한 번만 뜬다. 거부되면 그 뒤로는 요청해도 아무것도
- * 안 뜨고 즉시 거부로 처리되며 복구는 iOS 설정 앱뿐이다. 그래서 우리 화면으로
- * 먼저 묻고 "응"일 때만 진짜 권한 팝업(setNotificationsEnabled 내부)을 부른다.
+ * 안 뜨고 즉시 거부로 처리되며 복구는 iOS 설정 앱뿐이다. 그래서
+ * canEnableNotificationsInApp()으로 갈래를 먼저 정한다: 앱 안에서 켤 수 있으면
+ * 우리 화면 → "그래"일 때 setNotificationsEnabled(내부에서 필요하면 진짜 팝업)를
+ * 부르고, 과거에 거부당했으면 팝업 대신 설정 화면의 알림 섹션으로 안내한다 —
+ * 팝업을 또 시도해봐야 즉시 거부만 반환되기 때문이다.
  */
 
-/** 홈에서 "알림 켤까?"를 지금 물어야 하는가 — 세 조건을 전부 만족해야 true. */
+/** 홈에서 "알림 켤까?"를 지금 물어야 하는가. 하나라도 걸리면 false. */
 export async function shouldAskNotificationOptIn(): Promise<boolean> {
   const db = getUserDb();
   const row = await db.getFirstAsync<{ value: string }>(
     'SELECT value FROM app_meta WHERE key = ?',
-    [NOTIFY_OPTIN_ASKED_KEY],
+    [NOTIFY_OPTIN_ASKED_DAY_KEY],
   );
-  if (row?.value === '1') return false; // 이미 물어봤음
+  if (row?.value === String(todayEpochDay())) return false; // 오늘 이미 물어봤음
 
-  if (await isNotificationsEnabled()) return false; // 이미 켜져 있으면 물을 이유 없음
+  if ((await getDeclineStreak()) >= DECLINE_STREAK_LIMIT) return false; // 연속 거절 상한
 
-  return hasCompletedAnySession(); // 첫 세션을 끝냈을 때만
+  // 실효 알림 상태가 이미 켜져 있는가 — 앱 스위치(app_meta)와 iOS 실제 권한 둘 다
+  // 봐야 한다. 스위치는 켜져 있는데 사용자가 iOS 설정에서 나중에 권한만 껐다면
+  // 알림은 실제로 안 가는데 우리는 "이미 켜져 있다"고 오판해 영영 안 묻게 된다 —
+  // 이 함수가 잡아야 할 바로 그 상태다.
+  if (await isNotificationsEnabled()) {
+    let osGranted = false;
+    try {
+      osGranted = (await Notifications.getPermissionsAsync()).granted;
+    } catch {
+      osGranted = false; // 조회 실패는 fail-open(물어보는 쪽)으로 — 아래에서 계속 진행
+    }
+    if (osGranted) return false;
+  }
+
+  return isLateFirstTouchToday();
 }
 
-/** 물어봤음을 영속한다(사용자가 어느 버튼을 골랐든 호출). */
-export async function markNotificationOptInAsked(): Promise<void> {
+/** 연속 거절 횟수를 읽는다. 키가 없거나 숫자가 아니면 0. */
+async function getDeclineStreak(): Promise<number> {
+  const db = getUserDb();
+  const row = await db.getFirstAsync<{ value: string }>(
+    'SELECT value FROM app_meta WHERE key = ?',
+    [NOTIFY_OPTIN_DECLINE_STREAK_KEY],
+  );
+  const n = Number(row?.value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+async function putMeta(key: string, value: string): Promise<void> {
   const db = getUserDb();
   await db.runAsync(
     `INSERT INTO app_meta (key, value) VALUES (?, ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-    [NOTIFY_OPTIN_ASKED_KEY, '1'],
+    [key, value],
   );
 }
 
-/** __DEV__ QA 전용 — 물어본 기록을 지워 opt-in 덮개가 다시 뜨게 한다. */
+/**
+ * [그래, 알려줘] — 오늘 물어봤음을 박고 연속 거절을 0으로 되돌린다.
+ * 권한 팝업이 거부로 끝나도 여기를 부른다(거절한 건 우리 질문이 아니라 iOS 팝업이고,
+ * 사용자의 의사 자체는 "받겠다"였다).
+ */
+export async function markNotificationOptInAccepted(): Promise<void> {
+  await putMeta(NOTIFY_OPTIN_ASKED_DAY_KEY, String(todayEpochDay()));
+  await putMeta(NOTIFY_OPTIN_DECLINE_STREAK_KEY, '0');
+}
+
+/** [괜찮아] — 오늘 물어봤음을 박고 연속 거절을 1 늘린다. 상한에 닿으면 더 안 묻는다. */
+export async function markNotificationOptInDeclined(): Promise<void> {
+  const next = (await getDeclineStreak()) + 1;
+  await putMeta(NOTIFY_OPTIN_ASKED_DAY_KEY, String(todayEpochDay()));
+  await putMeta(NOTIFY_OPTIN_DECLINE_STREAK_KEY, String(next));
+}
+
+/**
+ * 앱 안에서(iOS 설정 앱에 가지 않고) 알림을 켤 수 있는가 — 덮개의 [그래, 알려줘]가
+ * 어느 갈래로 갈지 결정한다.
+ *
+ * true인 두 경우:
+ *  - `granted` — 권한이 이미 있다. setNotificationsEnabled(true)가 팝업 없이 바로 성공한다
+ *    (앱 스위치만 꺼둔 상태가 여기다).
+ *  - `canAskAgain` — 아직 한 번도 안 물어봤다(status undetermined). 팝업이 뜬다.
+ *
+ * false는 "과거에 거부당했다" 하나뿐이고, 이때만 iOS 설정 앱 경로가 필요하다.
+ * **`canAskAgain`만 보면 안 된다** — iOS에서 canAskAgain은 status가 undetermined일
+ * 때만 true라서 "이미 허용됨"도 false로 나온다. 그러면 그냥 켜면 될 사용자를
+ * 설정 화면으로 헛돌리게 된다(2026-08-26 수정).
+ *
+ * 조회 실패 시 false — 설정 경로는 한 단계 더 걸릴 뿐 막다른 길은 아니므로,
+ * 잘못 판단했을 때 손해가 더 작은 쪽으로 떨어뜨린다.
+ */
+export async function canEnableNotificationsInApp(): Promise<boolean> {
+  try {
+    const result = await Notifications.getPermissionsAsync();
+    return result.granted || result.canAskAgain;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * __DEV__ QA 전용 — 물어본 기록을 지워 opt-in 덮개가 다시 뜨게 한다.
+ * **연속 거절 횟수도 함께 0으로 되돌린다** — 이게 없으면 QA 중 [괜찮아]를 세 번
+ * 누른 순간 덮개를 영영 못 보게 된다. 옛 키도 같이 청소한다.
+ */
 export async function resetNotifyOptInAsk(): Promise<void> {
   const db = getUserDb();
-  await db.runAsync('DELETE FROM app_meta WHERE key = ?', [NOTIFY_OPTIN_ASKED_KEY]);
+  await db.runAsync('DELETE FROM app_meta WHERE key = ?', [NOTIFY_OPTIN_ASKED_DAY_KEY]);
+  await db.runAsync('DELETE FROM app_meta WHERE key = ?', [NOTIFY_OPTIN_DECLINE_STREAK_KEY]);
+  await db.runAsync('DELETE FROM app_meta WHERE key = ?', [LEGACY_NOTIFY_OPTIN_ASKED_KEY]);
 }

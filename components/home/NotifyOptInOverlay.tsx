@@ -1,22 +1,36 @@
 import { useCallback, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 
 import { HANDWRITING_FONT, HANDWRITING_METRICS } from '../../lib/fonts';
-import { markNotificationOptInAsked, setNotificationsEnabled } from '../../lib/notifications';
+import {
+  canEnableNotificationsInApp,
+  markNotificationOptInAccepted,
+  markNotificationOptInDeclined,
+  setNotificationsEnabled,
+} from '../../lib/notifications';
 
 /**
- * 홈 알림 opt-in 덮개 — 첫 단어장 세션을 끝낸 직후 홈에서 "알림 켤까?"를 한 번만 묻는다.
- * `TestGateOverlay`와 마찬가지로 홈의 절대좌표 체계(`mockupLayout.ts`)에 참여하지 않는
- * 독립 전체화면이다.
+ * 홈 알림 opt-in 덮개 — 오늘 미션을 통째로 놓친 날(오늘 처음 손댄 시간대가 마지막
+ * 시간대, `isLateFirstTouchToday()`) 홈에서 "알림 켤까?"를 묻는다(2026-08-26 개편
+ * — 그 전엔 "첫 단어장 세션을 끝낸 직후"였다). `TestGateOverlay`와 마찬가지로
+ * 홈의 절대좌표 체계(`mockupLayout.ts`)에 참여하지 않는 독립 전체화면이다.
  *
- * ── 왜 이렇게 하는가 (어기지 말 것) ──────────────────────────────────
+ * ── 왜 시점을 "실패 직후"로 바꿨는가 ──────────────────────────────────
+ * 세션을 성공한 직후에 물으면 "알림 없어도 되네"라고 학습한다(방금 알림 없이
+ * 해냈으므로). 알림이 필요하다고 느끼는 순간은 시간대를 놓쳤다는 걸 깨달은 직후다.
+ * 그래서 매일(생애 1회가 아니라) 다시 물을 수 있다 — 노출 조건 자체는
+ * lib/notifications.ts의 shouldAskNotificationOptIn()에 있다.
+ *
+ * ── [응]이 두 갈래로 갈리는 이유 ──────────────────────────────────────
  * iOS 권한 팝업은 **앱 생애 딱 한 번만** 뜬다. 한 번 거부되면 그 뒤로는 요청해도
  * 아무것도 안 뜨고 즉시 거부로 처리되며, 복구는 사용자가 직접 iOS 설정 앱에 들어가는
- * 것뿐이다(중학생 사용자가 그 경로를 찾을 가능성은 낮다). 그래서 우리 화면으로 먼저
- * 묻고 "응"일 때만 진짜 팝업을 부른다 — "나중에"를 골라도 그 한 방을 안 쓰고 아껴둔다.
- * 시점을 첫 세션 직후로 잡은 이유는, 앱을 켜자마자 물으면 아이가 앱이 뭔지 모르는
- * 상태라 거절률이 높기 때문이다.
+ * 것뿐이다. 그래서 [그래, 알려줘]를 눌렀을 때 `canEnableNotificationsInApp()`으로
+ * 갈래를 정한다: 앱 안에서 켤 수 있으면(이미 허용됐거나 아직 안 물어봤으면) 그대로
+ * 켜고, 과거에 거부당했으면 팝업을 또 시도해봐야 즉시 거부만 돌아오므로 대신 앱
+ * 설정 화면의 알림 섹션으로 보낸다 — 사용자가 iOS 설정까지 직접 찾아가는 것보다
+ * 그나마 가깝다.
  *
  * 레이아웃·색·폰트·안전영역 처리는 `TestGateOverlay`를 그대로 따른다. 다만 여기는
  * "심판받기를 선택했다"는 결정감을 없애야 하는 화면이 아니라 그냥 평범한 선택이므로
@@ -31,28 +45,38 @@ interface Props {
 // 덮개는 flex 흐름이라 `handwritingTop()`(절대좌표 전용)을 쓰지 않는다. lineHeight는
 // fontSize와 같게 두면 iOS가 베이스라인을 재배치해 글자가 아래로 밀리므로
 // (lib/fonts.ts 기록된 실제 사고) 반드시 lineHeightEm을 곱해 명시한다.
-const TITLE_FONT_SIZE = 34;
+const TITLE_FONT_SIZE = 28;
 const BODY_FONT_SIZE = 20;
 const BUTTON_FONT_SIZE = 24;
-const HINT_FONT_SIZE = 17;
+
+/** 제목 글자색. 크림 배경(#fffaf0) 위 대비 약 7:1로 본문 기준을 넘는다. */
+const TITLE_BROWN = '#6b4423';
 
 export default function NotifyOptInOverlay({ onResolved }: Props) {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const [busy, setBusy] = useState(false);
 
   const handleYes = useCallback(async () => {
     if (busy) return;
     setBusy(true);
     try {
-      // 거부되면 저장 없이 false만 돌아온다 — 그래도 다시 묻지 않는다(팝업 한 방이
-      // 이미 소진됐으므로 다시 물어도 아무것도 안 뜬다).
-      await setNotificationsEnabled(true);
-      await markNotificationOptInAsked();
+      if (await canEnableNotificationsInApp()) {
+        // 권한이 이미 있으면 팝업 없이 바로 켜지고, 아직 안 물어본 상태면 여기서
+        // iOS 팝업이 뜬다(생애 1회). 거부돼도 저장 없이 false만 돌아올 뿐 흐름은 같다.
+        await setNotificationsEnabled(true);
+      } else {
+        // 과거에 거부당했다 — 다시 요청해도 팝업 없이 즉시 거부만 돌아오므로
+        // 대신 설정 화면의 알림 섹션으로 보낸다.
+        router.push({ pathname: '/settings', params: { focus: 'notifications' } });
+      }
+      // 두 갈래 모두 "받겠다"는 의사 표시다 — 연속 거절이 여기서 끊긴다.
+      await markNotificationOptInAccepted();
       onResolved();
     } finally {
       setBusy(false);
     }
-  }, [busy, onResolved]);
+  }, [busy, onResolved, router]);
 
   const handleLater = useCallback(async () => {
     if (busy) return;
@@ -60,7 +84,7 @@ export default function NotifyOptInOverlay({ onResolved }: Props) {
     try {
       // setNotificationsEnabled를 부르지 않는다 — 부르는 순간 iOS 팝업이 떠서
       // 이 기능의 존재 이유가 사라진다.
-      await markNotificationOptInAsked();
+      await markNotificationOptInDeclined();
       onResolved();
     } finally {
       setBusy(false);
@@ -75,14 +99,16 @@ export default function NotifyOptInOverlay({ onResolved }: Props) {
       ]}
     >
       <View style={styles.card}>
+        {/* 줄바꿈을 손으로 넣는 이유: 자동 줄바꿈에 맡기면 "테스트 / 타임에"처럼
+            한 낱말이 잘려 손글씨체에서 특히 어색하다. 세 줄이 비슷한 길이가 되도록
+            끊었고, 폭이 좁은 기기(375pt)에서도 넘치지 않도록 TITLE_FONT_SIZE를
+            34 → 28로 낮췄다. OS 텍스트 크기를 키운 기기에서는 그래도 넘쳐 자동
+            줄바꿈이 한 번 더 일어나는데, 흐름 레이아웃이라 깨지지는 않는다. */}
         <Text maxFontSizeMultiplier={1.2} style={styles.title}>
-          알림 켤까?
+          {'전구 미션이 열릴 때랑\n테스트 타임에 알림을\n보내줄까요?'}
         </Text>
         <Text maxFontSizeMultiplier={1.2} style={styles.body}>
-          시간대가 열릴 때랑 테스트 타임에 한 번씩만 알려줄게.
-        </Text>
-        <Text maxFontSizeMultiplier={1.2} style={styles.body}>
-          계속 조르지는 않을게.
+          계속 조르지는 않아요.
         </Text>
 
         <Pressable
@@ -90,10 +116,10 @@ export default function NotifyOptInOverlay({ onResolved }: Props) {
           onPress={handleYes}
           disabled={busy}
           accessibilityRole="button"
-          accessibilityLabel="응, 알려줘"
+          accessibilityLabel="그래, 알려줘"
         >
           <Text maxFontSizeMultiplier={1.2} style={styles.primaryButtonText}>
-            응, 알려줘
+            그래, 알려줘
           </Text>
         </Pressable>
 
@@ -102,16 +128,12 @@ export default function NotifyOptInOverlay({ onResolved }: Props) {
           onPress={handleLater}
           disabled={busy}
           accessibilityRole="button"
-          accessibilityLabel="나중에"
+          accessibilityLabel="괜찮아"
         >
           <Text maxFontSizeMultiplier={1.2} style={styles.secondaryButtonText}>
-            나중에
+            괜찮아
           </Text>
         </Pressable>
-
-        <Text maxFontSizeMultiplier={1.2} style={styles.hint}>
-          설정에서 언제든 켤 수 있어.
-        </Text>
       </View>
     </View>
   );
@@ -140,7 +162,7 @@ const styles = StyleSheet.create({
     fontSize: TITLE_FONT_SIZE,
     lineHeight: TITLE_FONT_SIZE * HANDWRITING_METRICS.lineHeightEm,
     fontFamily: HANDWRITING_FONT,
-    color: '#e8590c',
+    color: TITLE_BROWN,
     textAlign: 'center',
   },
   body: {
@@ -183,13 +205,5 @@ const styles = StyleSheet.create({
     lineHeight: (BUTTON_FONT_SIZE - 2) * HANDWRITING_METRICS.lineHeightEm,
     fontFamily: HANDWRITING_FONT,
     color: '#888',
-  },
-  hint: {
-    marginTop: 10,
-    fontSize: HINT_FONT_SIZE,
-    lineHeight: HINT_FONT_SIZE * HANDWRITING_METRICS.lineHeightEm,
-    fontFamily: HANDWRITING_FONT,
-    color: '#aaa',
-    textAlign: 'center',
   },
 });

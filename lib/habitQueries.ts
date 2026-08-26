@@ -772,12 +772,28 @@ export async function deleteTodaySlotRecords(): Promise<DeletedSlotRecords> {
 }
 
 /**
- * 지금까지 단어장 세션(슬롯 조각)을 한 번이라도 끝냈는가 — 홈 알림 opt-in 덮개의
- * 노출 조건 중 하나(첫 세션 이후에만 물어본다). `slot_part`에 행이 하나라도 있으면
- * true (날짜 무관 — 전체 이력 기준).
+ * 오늘 처음 손댄 시간대가 마지막 시간대인가 — 홈 알림 opt-in 덮개의 노출 조건
+ * (2026-08-26, §9 개편: "첫 세션 직후"에서 "오늘 미션을 통째로 놓친 날"로 변경).
+ *
+ * "오늘 처음 손댄 시간대 = 마지막 시간대"라는 것은 앞선 시간대(들)를 전부 그냥
+ * 흘려보냈다는 뜻이다(마지막 시간대가 열리고 나서야 처음으로 slot_part가 찍혔으므로).
+ * 즉 이 값이 true인 하루는 "오늘 미션을 통째로 놓친 날"이다.
+ *
+ * 이 값은 그날 하루 동안 계속 true로 유지된다 — local_day가 바뀌는(자정) 순간
+ * MIN(slot_index)를 다시 계산하게 되므로 자연히 소멸하고, 다음 날 같은 조건이
+ * 다시 성립하면 다시 true가 된다(별도 리셋 로직 불필요).
  */
-export async function hasCompletedAnySession(): Promise<boolean> {
+export async function isLateFirstTouchToday(): Promise<boolean> {
   const db = getUserDb();
-  const row = await db.getFirstAsync<{ x: number }>('SELECT 1 AS x FROM slot_part LIMIT 1');
-  return row != null;
+  const today = todayEpochDay();
+
+  const row = await db.getFirstAsync<{ s: number | null }>(
+    'SELECT MIN(slot_index) AS s FROM slot_part WHERE local_day = ?',
+    [today],
+  );
+  if (row?.s == null) return false;
+
+  const slots = await getSlotConfig();
+  const lastSlotIndex = slots[slots.length - 1].slotIndex;
+  return row.s === lastSlotIndex;
 }
