@@ -49,6 +49,7 @@ import {
 } from '../lib/habitQueries';
 import { shouldAskNotificationOptIn } from '../lib/notifications';
 import { ensureTodayDay, type DayWithWords } from '../lib/queries';
+import { getTodayTestSession } from '../lib/reviewQueries';
 import { getTestGateState, type TestGateState } from '../lib/testSchedule';
 
 export default function Index() {
@@ -71,6 +72,14 @@ export default function Index() {
   // 예약 테스트 덮개 — null이면 "아직 조회 중"(덮개를 띄우지 않는다). 홈이 먼저
   // 보였다가 덮이는 편이, 덮개가 잠깐 떴다 사라지는 것보다 낫다는 판단(작업 지시서).
   const [testGate, setTestGate] = useState<TestGateState | null>(null);
+
+  /**
+   * [테스트] 버튼으로 직접 연 덮개(manual 모드). 예약 덮개와 같은 컴포넌트를 쓰되
+   * 문구와 탈출구만 다르다 — 스스로 들어가는 길이 더 헐거우면 안 된다는 판단
+   * (근거는 `components/home/TestGateOverlay.tsx` 헤더).
+   * 예약 덮개와 달리 DB에 남는 게 없으므로 순수 화면 상태다.
+   */
+  const [manualTestGate, setManualTestGate] = useState(false);
 
   const loadTestGate = useCallback(() => {
     getTestGateState()
@@ -118,6 +127,36 @@ export default function Index() {
       });
   }, []);
 
+  /**
+   * 덮개가 테스트 화면으로 넘어가기 직전에 부른다 — 게이트 상태를 "모름"으로 되돌린다.
+   * 안 하면 복귀할 때 옛 `'due'`가 그대로 그려져 덮개가 번쩍인다(근거는 `enterTest` 주석).
+   * 두 덮개 다 같은 이유라 하나로 처리한다.
+   */
+  const handleEnterTest = useCallback(() => {
+    setTestGate(null);
+    setManualTestGate(false);
+  }, []);
+
+  /**
+   * [테스트] 버튼 — 곧장 라우팅하지 않고 진입 덮개를 띄운다.
+   *
+   * 단 **오늘 몫을 이미 봤으면 덮개를 건너뛴다.** 덮개는 "테스트를 보게 만드는 문"인데
+   * 볼 게 없으면 1.2초 길게 누르기가 결과·재채점 화면으로 가는 통행세가 될 뿐이고,
+   * 문구("최고 N원을 획득하세요")도 이미 받은 사람에게는 거짓말이 된다.
+   * `testGate`로 판정하지 않는 이유: 예약이 꺼져 있으면 게이트가 'done'까지 가기 전에
+   * 'off'로 끝나서 완료 여부를 알 수 없다.
+   */
+  const handlePressTest = useCallback(() => {
+    getTodayTestSession()
+      .then((session) => {
+        if (session) router.push('/test');
+        else setManualTestGate(true);
+      })
+      // 조회 실패는 덮개 쪽으로 흘린다 — 테스트 화면이 같은 판정을 한 번 더 하므로
+      // (진입 게이트) 잘못 열려도 그쪽에서 완료 화면으로 걸린다.
+      .catch(() => setManualTestGate(true));
+  }, []);
+
   // 오늘 단어장 진입 — 입구가 둘이다(말풍선, 잔디 게이지의 열린 전구). 같은 곳으로 보낸다.
   const goToWordbook = useCallback(() => {
     if (!day) return;
@@ -149,6 +188,9 @@ export default function Index() {
       loadTodayDay({ silent: true });
       loadTestGate();
       loadAskNotify();
+      // 직접 연 덮개는 홈으로 돌아오는 순간 닫는다 — 이게 없으면 덮개로 테스트에
+      // 들어갔다 나온 뒤 홈이 다시 그 덮개에 덮여 있다(state가 그대로 남으므로).
+      setManualTestGate(false);
     }, [loadHabit, loadTodayDay, loadTestGate, loadAskNotify]),
   );
 
@@ -246,7 +288,7 @@ export default function Index() {
               />
             </View>
 
-            <HomeMenuButtons scale={s} />
+            <HomeMenuButtons scale={s} onPressTest={handlePressTest} />
 
             <Image
               source={require('../assets/images/deco-mountains.png')}
@@ -264,15 +306,29 @@ export default function Index() {
         다른 상태(off/before/done/skipped/unavailable/snoozed)면 아무것도 그리지 않는다.
       */}
       {testGate?.kind === 'due' && (
-        <TestGateOverlay gate={testGate} onResolved={loadTestGate} />
+        <TestGateOverlay gate={testGate} onResolved={loadTestGate} onEnterTest={handleEnterTest} />
+      )}
+
+      {/*
+        [테스트] 버튼으로 직접 연 덮개. 예약 덮개가 떠 있으면 그리지 않는다 — 둘 다
+        전체 화면이라 겹치면 하나가 다른 하나를 통째로 가리고, 시각에 묶인 쪽이 우선이다.
+        (버튼 자체가 예약 덮개에 가려 안 눌리므로 실제로 겹칠 일은 거의 없지만,
+         덮개가 뜨기 직전에 눌린 경우가 남는다.)
+      */}
+      {testGate?.kind !== 'due' && manualTestGate && (
+        <TestGateOverlay
+          gate={{ kind: 'manual' }}
+          onResolved={() => setManualTestGate(false)}
+          onEnterTest={handleEnterTest}
+        />
       )}
 
       {/*
         홈 알림 opt-in 덮개 — 오늘 미션을 통째로 놓친 날(앞 시간대를 전부 흘려보내고
         마지막 시간대에 와서야 단어장을 처음 훑은 날) "알림 보내줄까?"를 묻는다.
-        예약 테스트 덮개가 떠 있으면 띄우지 않는다 — 둘 다 전체 화면이라 겹치면 하나가
-        다른 하나를 완전히 가린다. 테스트 덮개가 시간에 묶여 있어 우선이고, 알림 질문은
-        다음 기회에 떠도 아무것도 잃지 않는다.
+        테스트 덮개(예약이든 직접 연 것이든)가 떠 있으면 띄우지 않는다 — 둘 다 전체
+        화면이라 겹치면 하나가 다른 하나를 완전히 가린다. 테스트 덮개가 우선이고,
+        알림 질문은 다음 기회에 떠도 아무것도 잃지 않는다.
 
         `testGate !== null`(= 판정이 끝났다)까지 요구하는 이유: 두 판정이 병렬 비동기라
         알림 쪽이 먼저 끝날 수 있는데, 그 틈에 이 덮개가 떴다가 testGate가 'due'로
@@ -282,7 +338,7 @@ export default function Index() {
         testGate 조회가 실패하면 이 덮개도 안 뜨게 되지만, 둘 다 같은 user.db를 읽으므로
         한쪽이 실패하면 다른 쪽도 실패한다 — 실질적인 손해가 없다.
       */}
-      {testGate !== null && testGate.kind !== 'due' && askNotify === true && (
+      {testGate !== null && testGate.kind !== 'due' && !manualTestGate && askNotify === true && (
         <NotifyOptInOverlay onResolved={loadAskNotify} />
       )}
     </>

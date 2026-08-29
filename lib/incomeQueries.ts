@@ -82,6 +82,35 @@ export async function getIncomeRules(): Promise<IncomeRule[]> {
 }
 
 /**
+ * 상금 구간의 양 끝 — 테스트 덮개(`components/home/TestGateOverlay.tsx`)가
+ * "최고 N원 / M점만 넘어도 K원"이라고 말하기 위해 쓴다.
+ *
+ * 금액도 구간 경계도 상수로 박지 않는 이유: 금액은 설정 화면에서 편집되고
+ * (`updateIncomeRuleAmount`), 경계는 지금은 고정이지만 문구가 그 사실에 기대면
+ * 나중에 구간을 바꿀 때 조용히 거짓말이 된다. 여기서 읽으면 표가 원본이 된다.
+ */
+export interface PrizeRange {
+  /** 최고 구간(=만점)의 금액. */
+  topAmount: number;
+  /** 최저 구간의 문턱 점수 — "M점만 넘어도"의 M. */
+  lowScore: number;
+  /** 최저 구간의 금액. */
+  lowAmount: number;
+}
+
+export async function getPrizeRange(): Promise<PrizeRange> {
+  const rules = await getIncomeRules(); // min_score 내림차순 + lazy seed 포함
+  // seed까지 실패해 빈 표가 오는 방어적 상황 — 상금 문구는 덮개의 곁다리라
+  // 여기서 throw해서 덮개 자체를 막는 것보다 0원으로 흘리는 편이 낫다.
+  if (rules.length === 0) {
+    return { topAmount: 0, lowScore: 0, lowAmount: 0 };
+  }
+  const top = rules[0];
+  const low = rules[rules.length - 1];
+  return { topAmount: top.amount, lowScore: low.min_score, lowAmount: low.amount };
+}
+
+/**
  * 특정 구간(income_rule.id)의 금액만 수정한다. 구간 경계(min_score)는 이번
  * 기능 범위 밖 — 고정값으로 취급하고 절대 UPDATE하지 않는다.
  * 이미 기록된 과거 test_session.income_amount는 저장 시점의 스냅샷이라

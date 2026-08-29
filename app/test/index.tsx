@@ -54,9 +54,13 @@ interface GradeState {
 }
 
 export default function TestScreen() {
-  // 예약 테스트 덮개(홈)에서 `locked=1`로 들어온 경우에만 이탈을 잠근다. 딸이
-  // 직접 홈 메뉴 버튼으로 들어온 경우는 이미 스스로 결정한 것이라 가둘 이유가
-  // 없고, 실수로 들어갔다 갇히면 억울하다.
+  // 홈의 테스트 덮개(`TestGateOverlay`)에서 `locked=1`로 들어온 경우에만 이탈을
+  // 잠근다. 2026-08-29부터 홈 [테스트] 버튼도 그 덮개를 거치므로 **사실상 모든
+  // 정상 진입이 잠긴다** — 스스로 들어간 사람만 바로 나올 수 있으면 계약이
+  // 거꾸로라는 피드백(덮개 파일 헤더 참고). 실수로 눌러 갇히는 걱정은 덮개의
+  // 길게 누르기 + [쫌 있다]가 이미 막는다.
+  // 파라미터를 계속 보는 이유: 딥링크·알림 등 덮개를 거치지 않는 진입이 생기면
+  // 그때는 잠그지 않는 게 맞고, 잠금 조건이 한 곳(여기)에 남아 있어야 한다.
   const { locked } = useLocalSearchParams<{ locked?: string }>();
   const isLockedEntry = locked === '1';
 
@@ -127,6 +131,28 @@ export default function TestScreen() {
   useEffect(() => {
     lastIndexRef.current = questions.length - 1;
   }, [questions.length]);
+
+  /**
+   * ⚠ **키보드를 내리면 목록이 맨 위로 튀는 문제 — 보류다** (2026-08-29 사용자 판단).
+   * 원인은 규명됐다. `automaticallyAdjustKeyboardInsets`를 켜면 도는 RN 네이티브
+   * 핸들러(React/Fabric/Mounting/ComponentViews/ScrollView/RCTScrollViewComponentView.mm,
+   * 구아키텍처 RCTScrollView.m에도 쌍둥이)에 이런 줄이 있다:
+   *
+   *   if (UIAccessibilityPrefersCrossFadeTransitions() && keyboardEndFrame.size.height == 0) {
+   *     newContentOffset.y = 0;   // ← 최상단으로
+   *     newEdgeInsets.bottom = 0;
+   *   }
+   *
+   * 크로스 페이드가 켜지면 iOS가 키보드 프레임을 다르게 보고해(높이 0) 인셋 계산이
+   * 망가지는데, RN이 그걸 "위치를 0으로 밀기"로 때웠다. 그래서 키보드를 내릴 때마다
+   * 스크롤이 처음으로 돌아간다. 발동 조건은 iOS 설정 → 손쉬운 사용 → 동작의
+   * **동작 줄이기 + 크로스 페이드 전환 선호가 둘 다 켜짐**이고, 개발 기기가 그 상태다.
+   *
+   * 고치지 않기로 한 이유: 그 조합을 켜는 사용자가 거의 없는 반면, 우회하려면
+   * 네이티브 보정을 끄고 키보드 높이·포커스 스크롤을 직접 관리해야 해서 **잘 도는
+   * 다수 경로에 새 사용성 결함을 들일 위험이 이득보다 크다**. 개발 기기에서 이 증상을
+   * 보면 앱을 의심하기 전에 그 두 스위치부터 확인할 것.
+   */
 
   useEffect(() => {
     return () => {
@@ -223,9 +249,20 @@ export default function TestScreen() {
     }));
   }, []);
 
-  // "점수 메기기" → 정답/발음확인/오답/발음헷갈림 컬럼 노출
+  // "점수 메기기" → 정답/발음확인/오답/발음헷갈림 컬럼 노출.
+  //
+  // 목록 맨 위로 되돌린다. 버튼이 마지막 문제 **아래**로 내려간 뒤로 필요해졌다:
+  // ⓐ 채점은 1번부터 하는 일인데 버튼을 누른 자리가 목록 끝이라, 그냥 두면 마지막
+  //    문제부터 보게 된다.
+  // ⓑ 같은 자리에 다음 버튼("점수 확인")이 그대로 들어선다. 두 번 톡톡 치면 채점을
+  //    한 칸도 안 한 채 제출되는데, 오답 체크가 하나도 없으면 **전부 정답 = 100점**이라
+  //    최고 상금이 그냥 나온다. 버튼을 손가락 밑에서 치우는 게 가장 확실한 방지다.
+  // animated: false인 이유는 windowSize=5라 긴 거리를 애니메이션으로 훑으면 중간 행이
+  // 빈 칸으로 지나가기 때문. 헤더가 "답" → "내 답/정답/듣기/오답/발음"으로 바뀌는 게
+  // 이미 강한 전환 신호라 순간이동이 혼란스럽지 않다.
   const handleStartGrading = useCallback(() => {
     setPhase('graded');
+    flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
   }, []);
 
   // "점수 확인" → 코끼리 애니메이션
@@ -332,6 +369,39 @@ export default function TestScreen() {
   );
 
   const headerLabel = useMemo(() => (phase === 'grading' ? '문제 / 답' : '문제 / 채점'), [phase]);
+
+  /**
+   * 진행 버튼은 화면 하단 고정이 아니라 **마지막 문제 아래**에 둔다
+   * (2026-08-29 딸 피드백: "점수 메기기 버튼이 처음부터 보이는 게 불편하다").
+   * 풀지도 않았는데 채점 버튼이 계속 시야에 있으면 답을 쓰는 내내 채점이 예고돼 있는
+   * 셈이라, 문제를 푸는 화면이 아니라 심판을 기다리는 화면이 된다. 목록 끝으로 내리면
+   * **끝까지 내려간 사람에게만** 나타나므로 버튼의 등장 자체가 "다 했다"는 표시가 된다.
+   *
+   * 고정 푸터를 스크롤 위치에 따라 보였다 숨겼다 하는 안은 반려했다 — 없던 것이 화면
+   * 아래에서 솟아오르면 그게 더 눈에 띄고, 위치에 따라 뜨고 지는 버튼은 누르려는
+   * 순간 도망간다.
+   *
+   * `useMemo`로 참조를 고정하는 것은 단어장 화면(app/day/[dayId].tsx의 `chainFooter`)과
+   * 같은 이유다 — 인라인 JSX를 주면 렌더마다 새 엘리먼트가 되어 푸터 셀이 매번 다시
+   * 그려지는데, 이 화면은 글자 한 자마다(`answers`) 리렌더가 나므로 그 비용이 타이핑에 붙는다.
+   */
+  const listFooter = useMemo(
+    () => (
+      <View style={styles.listFooter}>
+        {phase === 'grading' && (
+          <Pressable style={styles.footerButton} onPress={handleStartGrading}>
+            <Text style={styles.footerButtonText}>점수 메기기</Text>
+          </Pressable>
+        )}
+        {phase === 'graded' && (
+          <Pressable style={styles.footerButton} onPress={handleRevealScore}>
+            <Text style={styles.footerButtonText}>점수 확인</Text>
+          </Pressable>
+        )}
+      </View>
+    ),
+    [phase, handleStartGrading, handleRevealScore],
+  );
 
   // 이탈 잠금 — `locked=1`로 들어온 경우에만, grading/graded 구간에서만 걸린다.
   // revealing/result는 별도 return 블록이라 이 옵션의 영향을 받지 않는다(그 두
@@ -479,20 +549,8 @@ export default function TestScreen() {
             removeClippedSubviews
             keyboardShouldPersistTaps="handled"
             automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+            ListFooterComponent={listFooter}
           />
-
-          <View style={styles.footer}>
-            {phase === 'grading' && (
-              <Pressable style={styles.footerButton} onPress={handleStartGrading}>
-                <Text style={styles.footerButtonText}>점수 메기기</Text>
-              </Pressable>
-            )}
-            {phase === 'graded' && (
-              <Pressable style={styles.footerButton} onPress={handleRevealScore}>
-                <Text style={styles.footerButtonText}>점수 확인</Text>
-              </Pressable>
-            )}
-          </View>
         </>
       )}
     </View>
@@ -562,10 +620,17 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#aaa',
   },
-  footer: {
-    padding: 16,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#eee',
+  /**
+   * 목록 안(마지막 문제 아래)의 진행 버튼 자리. 고정 푸터였을 때 있던 위쪽 경계선을
+   * 뺐다 — 화면을 가르던 선이었지 목록의 일부가 아니었고, 함께 스크롤되는 지금은
+   * 마지막 행 밑줄과 겹쳐 두 줄로 보인다. paddingTop이 그 역할(마지막 행과 떼어놓기)을
+   * 대신한다. paddingBottom이 큰 것은 이제 이게 화면 맨 아래여서다 — 홈 인디케이터에
+   * 버튼이 닿지 않게 띄운다.
+   */
+  listFooter: {
+    paddingHorizontal: 16,
+    paddingTop: 24,
+    paddingBottom: 40,
   },
   footerButton: {
     backgroundColor: '#222',

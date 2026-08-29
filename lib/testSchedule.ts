@@ -3,9 +3,14 @@
  *
  * 배경: 딸(중2) 피드백 — "시험 보는 게 무서워서 테스트 버튼을 회피하게 된다".
  * 무서운 건 시험이 아니라 "버튼을 누르는 결정"이므로, 설정한 시각이 되면 홈 화면에
- * 덮개를 띄워 그 결정을 없앤다. 단 완전히 가두지는 않는다 — 미루기(snooze)와
- * 오늘 넘어가기(skip) 탈출구를 반드시 둔다(탈출구가 "앱 강제 종료"뿐이면 회피가
- * 버튼에서 앱 전체로 옮겨간다).
+ * 덮개를 띄워 그 결정을 없앤다.
+ *
+ * ⚠ 이 파일 첫 버전에는 "완전히 가두지 않는다 — 미루기와 오늘 넘어가기 탈출구를
+ * 반드시 둔다"고 적혀 있었다. **그 전제는 폐기됐다**(2026-08-29, 딸 본인 요청):
+ * 탈출구가 없는 편이 자신을 더 잘 가이드해 준다고 했다. 넘어가기는 삭제됐고
+ * 미루기는 하루 1회만 남았다. 진짜 탈출구는 화면이 아니라 설정에 있다(테스트 타임을
+ * 끄면 된다 — 대신 그 변경은 내일부터 적용된다). 그러니 **이 기능을 무르게 만드는
+ * 방향의 변경은 기본 반려**다(설계.md §8 배경 ⓓ).
  *
  * 영속은 app_meta 키-값만 사용한다 — 새 테이블·ALTER TABLE 금지(§ 가드레일 참고,
  * lib/db.ts의 USER_DB_DDL은 앱 시작마다 재실행되는데 ALTER TABLE ADD COLUMN에는
@@ -38,7 +43,13 @@ export type TestGateState =
   | { kind: 'skipped' } // 오늘은 넘어가기 사용함
   | { kind: 'unavailable' } // 출제할 단어가 없음
   | { kind: 'snoozed'; untilMs: number } // 미루는 중
-  | { kind: 'due'; snoozeCount: number; canSnooze: boolean }; // 덮개를 띄워야 함
+  // 덮개를 띄워야 함. `hour`는 덮개 문구가 "N시가 지나면 …"이라고 말하기 위해
+  // 함께 싣는다 — 설정에서 바뀌는 값이라 덮개가 상수로 박으면 거짓말이 된다.
+  //
+  // `canSnooze`는 **횟수와 시각 두 조건의 곱**이다(snoozeWouldCrossMidnight 참고).
+  // 화면은 이 불리언 하나만 보고 [30분 뒤에 할래]를 그릴지 정한다 — 왜 못 미루는지는
+  // 화면이 알 필요가 없고, 알게 하면 그 이유마다 문구가 갈라진다.
+  | { kind: 'due'; hour: number; snoozeCount: number; canSnooze: boolean };
 
 // ── app_meta 키 ──────────────────────────────────────────────────────────
 const KEY_ENABLED = 'test_alarm_enabled';
@@ -90,7 +101,12 @@ async function deleteMeta(keys: string[]): Promise<void> {
 export async function getTestAlarmConfig(): Promise<TestAlarmConfig> {
   const map = await readMetaMap(CONFIG_KEYS);
 
-  const enabled = map.get(KEY_ENABLED) === '1';
+  // **키가 없으면 켜짐이다** (2026-08-29 사용자 결정 — 그 전엔 기본 꺼짐이었다).
+  // 이 기능은 딸이 스스로에게 거는 계약인데, 설정 화면에 들어가 스위치를 켜야만
+  // 시작되면 정작 필요한 사람(미루는 사람)에게는 영영 시작되지 않는다.
+  // `=== '1'`로 두면 미설정이 '0'과 구별되지 않으므로 undefined를 따로 본다.
+  const enabledRaw = map.get(KEY_ENABLED);
+  const enabled = enabledRaw === undefined ? true : enabledRaw === '1';
   const hourRaw = map.get(KEY_HOUR);
   const hour = hourRaw !== undefined ? Number(hourRaw) : DEFAULT_ALARM_HOUR;
 
@@ -187,6 +203,30 @@ async function getTodaySnoozeState(): Promise<{ count: number; untilMs: number |
   return { count: Number.isFinite(count) ? count : 0, untilMs: untilMsRaw !== undefined ? Number(untilMsRaw) : null };
 }
 
+/**
+ * 지금 미루면 자정을 넘기는가. `true`면 미루기를 막는다(2026-08-29 사용자 지적).
+ *
+ * 23:50에 미루면 재개 시각이 00:20인데, 그때는 이미 날짜가 바뀌어 있다 —
+ * `getTodaySnoozeState()`의 기록은 어제 것이라 무효가 되고, 게이트는 새 날의 알람
+ * 시각 전이므로 `before`를 돌려준다. 즉 덮개가 다시 뜨지 않는다.
+ *
+ * **손해를 보는 쪽은 장치가 아니라 아이다.** [30분 뒤에 할래]를 누른 아이는 30분 뒤에
+ * 보겠다고 한 것이지 오늘을 포기한 게 아닌데, 앱이 다시 묻지 않아 **그날 상금을
+ * 통째로 날린다.** 테스트는 하루 1회(taken_day)라 다음 날 만회도 안 된다. 결국 그
+ * 버튼은 조용히 [오늘은 넘어갈래]가 된다 — 딸 요청으로 없앤 바로 그 버튼이다.
+ *
+ * 그러니 이 차단은 계약을 더 조이는 장치가 아니라 **약속을 지키는 쪽**이다. 버튼이
+ * "30분 뒤에"라고 말했으면 30분 뒤가 있어야 한다. 없으면 그 버튼을 내리는 게 맞다.
+ *
+ * 경계값(22:00 알람 기준 23:30)을 상수로 박지 않고 SNOOZE_MINUTES에서 **파생**한다 —
+ * 유예 시간을 60분으로 바꾸면 경계도 23:00으로 저절로 따라가야 한다. 초는 무시하므로
+ * 실제 재개 시각이 23:59:xx까지는 갈 수 있는데, 오늘 안이라 문제가 없다.
+ */
+function snoozeWouldCrossMidnight(now: Date): boolean {
+  const minutesLeftToday = 24 * 60 - (now.getHours() * 60 + now.getMinutes());
+  return minutesLeftToday <= SNOOZE_MINUTES;
+}
+
 /** 오늘 "넘어가기"를 사용했는지. 날짜가 바뀌면 자동 무효. */
 async function getTodaySkipped(): Promise<boolean> {
   const map = await readMetaMap([KEY_SKIP_DAY]);
@@ -230,14 +270,29 @@ export async function getTestGateState(nowMs: number = Date.now()): Promise<Test
     return { kind: 'snoozed', untilMs: snoozeState.untilMs };
   }
 
-  return { kind: 'due', snoozeCount: snoozeState.count, canSnooze: snoozeState.count < SNOOZE_LIMIT };
+  return {
+    kind: 'due',
+    hour: config.hour,
+    snoozeCount: snoozeState.count,
+    canSnooze: snoozeState.count < SNOOZE_LIMIT && !snoozeWouldCrossMidnight(now),
+  };
 }
 
 /**
- * 오늘 테스트를 30분 미룬다. 한도(SNOOZE_LIMIT) 초과면 아무것도 쓰지 않고 false.
- * 성공하면 count+1 저장 후 rescheduleSlotNotifications()를 기다리고 true.
+ * 오늘 테스트를 30분 미룬다. 한도(SNOOZE_LIMIT) 초과이거나 자정을 넘기는 시각이면
+ * 아무것도 쓰지 않고 false. 성공하면 count+1 저장 후
+ * rescheduleSlotNotifications()를 기다리고 true.
+ *
+ * 시각 검사를 `canSnooze`에만 두지 않고 여기서 다시 하는 이유: 덮개는 **뜰 때 한 번**
+ * 판정한 `gate`를 들고 있다. 23:25에 뜬 덮개를 23:35에 누르면 화면에는 버튼이 살아
+ * 있으므로, 여기서 막지 않으면 그 한 번은 자정을 넘겨 미뤄진다. 막힌 경우 화면은
+ * 재조회(`onResolved`)로 마지막 기회 덮개로 바뀐다.
  */
 export async function snoozeTest(nowMs: number = Date.now()): Promise<boolean> {
+  if (snoozeWouldCrossMidnight(new Date(nowMs))) {
+    return false;
+  }
+
   const state = await getTodaySnoozeState();
   if (state.count >= SNOOZE_LIMIT) {
     return false;
@@ -256,7 +311,18 @@ export async function snoozeTest(nowMs: number = Date.now()): Promise<boolean> {
   return true;
 }
 
-/** 오늘은 테스트를 건너뛴다. rescheduleSlotNotifications()를 기다린다. */
+/**
+ * 오늘은 테스트를 건너뛴다. rescheduleSlotNotifications()를 기다린다.
+ *
+ * ⚠ **현재 호출자가 없다** (2026-08-29). 딸 본인 요청으로 덮개의 [오늘은 넘어갈래]
+ * 버튼을 없앴기 때문 — 미루기를 다 쓰면 나가는 길은 테스트를 보는 것뿐이다.
+ * 그래도 지우지 않는 이유 둘: ⓐ 읽는 쪽(`getTodaySkipped()` → `kind: 'skipped'`)은
+ * **반드시 살아 있어야 한다.** 이 변경 전에 오늘 넘어가기를 이미 쓴 사용자가 있고,
+ * 그 기록을 무시하면 "넘어갔다"고 들은 사람에게 덮개가 다시 뜬다(자정에 자연 소멸).
+ * ⓑ 이 기능은 4일 새 세 번 뒤집혔다 — 탈출구가 돌아올 여지가 있고, 그때 되살리는
+ * 비용보다 여기 남겨두는 비용이 싸다. 되살리는 자리는 `TestGateOverlay`의 렌더
+ * 삼항 마지막 `null`이다.
+ */
 export async function skipTestToday(): Promise<void> {
   await writeMeta([[KEY_SKIP_DAY, String(todayEpochDay())]]);
 
@@ -275,7 +341,8 @@ export async function skipTestToday(): Promise<void> {
  */
 /**
  * 예약 설정(켬/끔·시각·pending)을 통째로 지워 **"한 번도 설정한 적 없는" 상태**로 되돌린다.
- * `__DEV__` QA 전용 — 설정 화면의 개발자 도구에서만 부른다.
+ * `__DEV__` QA 전용 — 설정 화면의 개발자 도구에서만 부른다. 기본값이 켜짐으로 바뀐 뒤로는
+ * (getTestAlarmConfig 참고) **초기화 결과가 "꺼짐"이 아니라 "켜짐 + 기본 시각"** 이다.
  *
  * 필요한 이유: setTestAlarm()의 비대칭(켜기는 즉시, 끄기·시각 변경은 내일부터) 때문에
  * **한 번 켜면 같은 날 안에는 되돌릴 수 없다** — current.enabled가 계속 true라

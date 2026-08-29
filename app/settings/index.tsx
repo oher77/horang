@@ -307,7 +307,9 @@ function DevToolsSection({ onTestAlarmReset }: { onTestAlarmReset: () => void })
               onTestAlarmReset();
               Alert.alert(
                 '초기화되었습니다',
-                `예약이 꺼진 상태가 됐고, 다시 켜면 기본 ${DEFAULT_ALARM_HOUR}시로 즉시 적용됩니다.`,
+                // 기본값이 켜짐으로 바뀐 뒤(lib/testSchedule.ts getTestAlarmConfig)
+                // 초기화 결과는 "꺼짐"이 아니라 "켜짐 + 기본 시각"이다.
+                `기본 상태(켜짐 · ${DEFAULT_ALARM_HOUR}시)로 돌아갔습니다.`,
               );
             } catch (err) {
               Alert.alert('초기화 실패', err instanceof Error ? err.message : String(err));

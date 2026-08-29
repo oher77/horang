@@ -75,6 +75,10 @@ const ITEMS: MenuItem[] = [
     label: { text: '발음체크', fontSize: 164 * HANDWRITING_TUNED_SCALE, centerX: 334, centerY: 137 },
   },
   {
+    // **테스트만 라우팅이 아니라 덮개를 연다** (2026-08-29) — 홈이 `onPressTest`를
+    // 넘겨 `TestGateOverlay`를 manual 모드로 띄운다. 예약 시각에 떠밀려 들어가든
+    // 스스로 들어가든 진입 경험이 같아야 하기 때문(그 근거는 덮개 파일 헤더).
+    // `route`는 홈이 `onPressTest`를 안 넘겼을 때의 폴백으로만 남는다.
     key: 'test',
     source: require('../../assets/images/btn-test.png'),
     at: PLACE.test,
@@ -101,7 +105,17 @@ const ITEMS: MenuItem[] = [
   },
 ];
 
-export default function HomeMenuButtons({ scale }: { scale: number }) {
+export default function HomeMenuButtons({
+  scale,
+  onPressTest,
+}: {
+  scale: number;
+  /**
+   * [테스트] 버튼을 눌렀을 때 라우팅 대신 실행할 동작 — 홈이 진입 덮개를 띄우는 데 쓴다.
+   * 안 넘기면 예전처럼 `/test`로 바로 간다(덮개 없이 = 잠금 없이 들어간다).
+   */
+  onPressTest?: () => void;
+}) {
   return (
     <Fragment>
       {ITEMS.map((item) => {
@@ -137,8 +151,11 @@ export default function HomeMenuButtons({ scale }: { scale: number }) {
           return <View key={item.key} style={place(item.at, scale)} pointerEvents="none">{content}</View>;
         }
 
+        const handlePress =
+          item.key === 'test' && onPressTest ? onPressTest : () => router.push(route);
+
         return (
-          <Pressable key={item.key} style={place(item.at, scale)} onPress={() => router.push(route)}>
+          <Pressable key={item.key} style={place(item.at, scale)} onPress={handlePress}>
             {content}
           </Pressable>
         );
