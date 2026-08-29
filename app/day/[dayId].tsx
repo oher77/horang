@@ -168,6 +168,10 @@ function DayScreenBody() {
   // 연쇄 복습 버튼용 — 이 슬롯에서 아직 남은 Day id(최근순, todayDayId 포함 가능) 및
   // 오늘 Day의 id(라벨 분기용). 초기화 effect와 recordSlotPart 결과 양쪽에서 채운다.
   const [remaining, setRemaining] = useState<number[]>([]);
+  // 이 슬롯의 요구 Day 전체(순서 = [오늘 Day, 복습 -1, -3, ...]). remaining과 달리 통과해도
+  // 줄지 않는다 — 슬롯 완성 후 순환 이동의 순서표이자 진행 점의 눈금이다. 요구 집합은
+  // 화면이 열려 있는 동안 불변이므로(위 trackingInitializedRef 주석) 마운트 시 1회만 채운다.
+  const [requiredDayIds, setRequiredDayIds] = useState<number[]>([]);
   const todayDayIdRef = useRef<number | null>(null);
   // 미션 완료 동전 애니메이션 — 총 지급액만 표시(개별 보너스 내역은 배너 문구로 충분).
   // 세션당 1회 구조(sessionRecorded 잠금)라 큐잉 없이 단순 교체로 충분하다.
@@ -267,6 +271,7 @@ function DayScreenBody() {
         }
         trackingInitializedRef.current = true;
         todayDayIdRef.current = req.todayDayId;
+        setRequiredDayIds(req.requiredDayIds);
 
         // 미션 임계값(체류 단독, 설계.md §7.1) — 오늘 Day/복습 Day로 규칙이 갈린다
         // (상수부 주석 참조). 배지 수는 이 시점(화면 로드) 1회 계산해 세션 중 스와이프해도
@@ -636,10 +641,25 @@ function DayScreenBody() {
     setSheetVisible(false);
   }, []);
 
-  // 연쇄 복습 버튼 — remaining은 [오늘 Day, 복습 -1, -3, -7, ...] 순서(getSlotRequirement의
-  // requiredDayIds 순서를 그대로 물려받음)라 자연히 우선순위가 된다. 오늘 단어장이 아직이면
-  // 그게 먼저 나온다 — 의도된 동작(복습만 걸러내지 않는다).
-  const nextDayId = remaining.find((id) => id !== dayIdNum) ?? null;
+  // 연쇄 복습 버튼 — 목적지 결정은 두 단계다.
+  //   ① 슬롯 미완성: remaining(아직 안 지난 요구 Day)의 첫 항목. remaining은 [오늘 Day,
+  //      복습 -1, -3, -7, ...] 순서를 그대로 물려받아 자연히 우선순위가 된다. 오늘 단어장이
+  //      아직이면 그게 먼저 나온다 — 의도된 동작(복습만 걸러내지 않는다). 이미 통과한 Day는
+  //      목록에서 빠지므로 제안되지 않는다: 의무가 남은 동안 버튼은 "다음에 할 것"을 가리키는
+  //      안내자라, 편한 Day를 반복하고 남은 걸 미루는 길을 열어주면 안 된다.
+  //   ② 슬롯 완성(remaining이 빔): requiredDayIds를 **순환**한다(2026-08-30 추가). 전에는
+  //      여기서 버튼이 사라졌는데, 갈 곳이 없어진 게 아니라 셈이 끝났을 뿐이다 — Day들은
+  //      그대로 있다. 완성 순간 도달 범위가 넓어지는 비대칭은 의도한 것이다: 의무가 없어지면
+  //      버튼의 역할이 안내자에서 통로로 바뀐다.
+  //      순환은 끝이 없으므로 종료 조건이 필요 없는 대신, 요구 Day가 1개뿐인 날(복습 대상
+  //      없음)에는 다음이 자기 자신이 되므로 그때만 null로 숨긴다.
+  const cyclicNextDayId = (() => {
+    if (requiredDayIds.length < 2) return null;
+    const i = requiredDayIds.indexOf(dayIdNum);
+    if (i < 0) return null;
+    return requiredDayIds[(i + 1) % requiredDayIds.length];
+  })();
+  const nextDayId = remaining.find((id) => id !== dayIdNum) ?? cyclicNextDayId;
   const [nextDayIndex, setNextDayIndex] = useState<number | null>(null);
 
   useEffect(() => {
@@ -693,9 +713,33 @@ function DayScreenBody() {
 
   const showChainButton = sessionRecorded && nextDayId !== null;
 
+  // 진행 점 — requiredDayIds 눈금 위에 통과(●) / 아직(○) / 지금 여기(◉)를 겹쳐 그린다.
+  // 잔량을 세던 문구("이번 시간대에 N개 남았어요")를 대체한 것이다. 순환에는 끝이 없어
+  // **잔량이 정의되지 않는다** — 어떤 정의로 세도 마지막 칸에서 0이 나오고 다음 바퀴에
+  // 부활해, "0개 남았어요" 밑에 "가자" 버튼이 붙는 모순이 생긴다. 위치는 끝이 없어도 항상
+  // 참이라 완성 전후를 한 규칙으로 그릴 수 있고, 그래서 여기엔 완성 여부 분기가 없다.
+  // 채움은 "이번 슬롯 통과"라 **바퀴가 바뀌어도 비우지 않는다**(2026-08-30 사용자 확정) —
+  // 비우려면 데이터에 없는 "바퀴" 개념을 만들어 replace 리마운트 너머까지 영속시켜야 한다.
+  // 통과 여부·현재 위치 모두 기존 state에서 파생되므로 새 쿼리가 없다.
   const chainFooter = showChainButton ? (
     <View style={styles.chainFooter}>
-      <Text style={styles.chainFooterHint}>이번 시간대에 {remaining.length}개 남았어요</Text>
+      <View style={styles.chainDots}>
+        {requiredDayIds.map((id) => {
+          const passed = !remaining.includes(id);
+          const isCurrent = id === dayIdNum;
+          return (
+            <View
+              key={id}
+              style={[
+                styles.chainDot,
+                passed && styles.chainDotPassed,
+                isCurrent && styles.chainDotCurrent,
+                isCurrent && passed && styles.chainDotCurrentPassed,
+              ]}
+            />
+          );
+        })}
+      </View>
       <Pressable style={styles.chainButton} onPress={handleGoNext} hitSlop={8}>
         <Text style={styles.chainButtonText}>{nextDayLabel}</Text>
       </Pressable>
@@ -1107,10 +1151,40 @@ const styles = StyleSheet.create({
     paddingVertical: 20,
     paddingHorizontal: 24,
   },
-  chainFooterHint: {
-    fontSize: 13,
-    color: '#888',
-    marginBottom: 8,
+  // 홈 잔디 게이지의 전구도 "동그란 것 여러 개 = 진행"이라 시각 문법이 겹친다. 뜻은 완전히
+  // 다르므로(전구 = 오늘 4바퀴 중 몇 바퀴 / 점 = 이 바퀴 안에서 몇 번째) 인상을 갈라놓는다:
+  // 점은 작고 무채색으로 두고 색은 현재 위치에만 준다. 개수도 다르다 — 전구는 4개 고정이고
+  // 점은 1 + 오늘의 복습 Day 수(최대 8, REVIEW_OFFSETS가 7개)라 날마다 바뀐다.
+  chainDots: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  chainDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    marginHorizontal: 3,
+    borderWidth: 1,
+    borderColor: '#c7c7c7',
+  },
+  chainDotPassed: {
+    backgroundColor: '#c7c7c7',
+  },
+  // 지금 여기 — 7px 점에서는 색만으로 잘 안 읽혀 크기도 함께 키운다. 채움(배경색)은 아래
+  // chainDotCurrentPassed로 분리했다.
+  // ★ 그래서 "현재인데 아직 ○"인 상태가 문법상 존재하지만 **실기기에서는 도달하지 않는다**
+  //   (2026-08-30 QA 확인). 푸터가 sessionRecorded 이후에야 마운트되므로 점이 채워진 뒤에
+  //   화면에 나타난다 — 차오르는 연출은 없다(설계 당시 있을 거라 본 것은 틀린 예측이었다).
+  //   분리는 안전망으로 남겨둔다: 푸터 노출 조건이 바뀌면 그때 제대로 동작한다.
+  chainDotCurrent: {
+    width: 9,
+    height: 9,
+    borderRadius: 4.5,
+    borderColor: '#ff9f43',
+  },
+  chainDotCurrentPassed: {
+    backgroundColor: '#ff9f43',
   },
   chainButton: {
     backgroundColor: '#ff9f43',
