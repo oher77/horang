@@ -27,6 +27,8 @@ import {
   View,
 } from 'react-native';
 
+import { epochDayToDateString } from '../../lib/dates';
+import { clearLedgerFixture, seedLedgerFixture } from '../../lib/devSeed';
 import {
   deleteTodaySlotRecords,
   getHabitBonusAmounts,
@@ -322,6 +324,68 @@ function DevToolsSection({ onTestAlarmReset }: { onTestAlarmReset: () => void })
     );
   }, [onTestAlarmReset]);
 
+  const handleSeedLedgerFixture = useCallback(() => {
+    Alert.alert(
+      '장부 테스트 데이터 심기 (3주)',
+      '완료된 직전 3주에 결정적 테스트 데이터를 심습니다. 기존에 심어둔 것이 있으면 먼저 지우고 다시 심습니다(실제 학습 기록은 건드리지 않습니다).',
+      [
+        { text: '취소', style: 'cancel' },
+        {
+          text: '심기',
+          onPress: async () => {
+            setBusy(true);
+            try {
+              const result = await seedLedgerFixture();
+              const rangeText = `${epochDayToDateString(result.startDay)} ~ ${epochDayToDateString(result.endDay)}`;
+              const lines = [
+                `기간: ${rangeText}`,
+                `완주일: ${result.fullDays}일`,
+                `슬롯 완성: ${result.slots}건`,
+                `습관 보너스: ${result.bonuses}건`,
+                result.skippedTests
+                  ? '테스트 기록: day 행이 없어 건너뜀'
+                  : `테스트 기록: ${result.testSessions}건`,
+              ];
+              Alert.alert('심었습니다', lines.join('\n'));
+            } catch (err) {
+              Alert.alert('심기 실패', err instanceof Error ? err.message : String(err));
+            } finally {
+              setBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  }, []);
+
+  const handleClearLedgerFixture = useCallback(() => {
+    Alert.alert(
+      '장부 테스트 데이터 지우기',
+      '완료된 직전 3주 범위의 테스트 세션·습관 보너스·슬롯 완성 기록을 지웁니다.',
+      [
+        { text: '취소', style: 'cancel' },
+        {
+          text: '지우기',
+          style: 'destructive',
+          onPress: async () => {
+            setBusy(true);
+            try {
+              const deleted = await clearLedgerFixture();
+              Alert.alert(
+                deleted > 0 ? '지웠습니다' : '지울 것이 없습니다',
+                deleted > 0 ? `총 ${deleted}행을 지웠습니다.` : '해당 범위에 기록이 없습니다.',
+              );
+            } catch (err) {
+              Alert.alert('지우기 실패', err instanceof Error ? err.message : String(err));
+            } finally {
+              setBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  }, []);
+
   const handleClearTestGateState = useCallback(() => {
     Alert.alert(
       '오늘 미루기·넘어가기 기록 삭제',
@@ -400,6 +464,22 @@ function DevToolsSection({ onTestAlarmReset }: { onTestAlarmReset: () => void })
         disabled={busy}
       >
         <Text style={styles.testButtonText}>알림 테스트 (5초 후)</Text>
+      </Pressable>
+
+      <Pressable
+        style={[styles.testButton, busy && styles.testButtonDisabled]}
+        onPress={handleSeedLedgerFixture}
+        disabled={busy}
+      >
+        <Text style={styles.testButtonText}>장부 테스트 데이터 심기 (3주)</Text>
+      </Pressable>
+
+      <Pressable
+        style={[styles.testButton, busy && styles.testButtonDisabled]}
+        onPress={handleClearLedgerFixture}
+        disabled={busy}
+      >
+        <Text style={styles.testButtonText}>장부 테스트 데이터 지우기</Text>
       </Pressable>
     </View>
   );

@@ -37,6 +37,27 @@ export function epochDayToDate(epochDay: number): Date {
   return new Date(epochDay * MS_PER_DAY);
 }
 
+const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'] as const;
+
+/**
+ * epoch day → 요일 한 글자. epochDayToDate는 "로컬 캘린더 날짜의 UTC 자정"을 돌려주므로
+ * 반드시 UTC 필드로 읽는다 — getDay()를 쓰면 시간대에 따라 하루씩 밀린다
+ * (epochDayToDateString이 UTC 필드를 쓰는 것과 같은 이유).
+ */
+export function weekdayLabel(epochDay: number): string {
+  return WEEKDAYS[epochDayToDate(epochDay).getUTCDay()];
+}
+
+/**
+ * epoch ms → "HH:MM" (분까지, 24시간제). `*_ms`는 `Date.now()` 스냅샷이라 로컬 필드로
+ * 읽는 게 맞다 — epoch **day** 쪽(epochDayToDateString/요일)이 UTC 필드를 쓰는 것과
+ * 반대이니 헷갈리지 말 것. 용돈 장부가 지급 시각을 보여줄 때 쓴다.
+ */
+export function hourMinute(ms: number): string {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 /**
  * epoch day → "YYYY-MM-DD" 형식 문자열 (표시용).
  * epochDay*MS_PER_DAY는 해당 로컬 캘린더 날짜의 UTC 자정이므로, UTC 필드로

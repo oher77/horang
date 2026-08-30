@@ -646,36 +646,6 @@ function monthRangeMs(yearMonth: string): { startMs: number; nextStartMs: number
   return { startMs: start.getTime(), nextStartMs: nextStart.getTime() };
 }
 
-/** 특정 월('YYYY-MM')의 habit_bonus 목록 (created_ms 로컬타임 기준, 최신순). */
-export async function listHabitBonusesForMonth(yearMonth: string): Promise<HabitBonusRow[]> {
-  const db = getUserDb();
-  const { startMs, nextStartMs } = monthRangeMs(yearMonth);
-
-  const rows = await db.getAllAsync<{
-    id: number;
-    local_day: number;
-    kind: string;
-    amount: number;
-    paid: number;
-    created_ms: number;
-  }>(
-    `SELECT id, local_day, kind, amount, paid, created_ms
-     FROM habit_bonus
-     WHERE created_ms >= ? AND created_ms < ?
-     ORDER BY created_ms DESC`,
-    [startMs, nextStartMs],
-  );
-
-  return rows.map((r) => ({
-    id: r.id,
-    local_day: r.local_day,
-    kind: r.kind,
-    amount: r.amount,
-    paid: r.paid === 1,
-    created_ms: r.created_ms,
-  }));
-}
-
 /** 특정 월('YYYY-MM')의 habit_bonus 합계(원). */
 export async function getMonthHabitBonusTotal(yearMonth: string): Promise<number> {
   const db = getUserDb();
@@ -720,12 +690,6 @@ export async function listUnpaidHabitBonuses(): Promise<HabitBonusRow[]> {
     paid: r.paid === 1,
     created_ms: r.created_ms,
   }));
-}
-
-/** 습관 보너스 지급 여부 토글 (부모 지급 체크, test_session.paid와 동일 개념). */
-export async function setHabitBonusPaid(id: number, paid: boolean): Promise<void> {
-  const db = getUserDb();
-  await db.runAsync('UPDATE habit_bonus SET paid = ? WHERE id = ?', [paid ? 1 : 0, id]);
 }
 
 /** deleteTodaySlotRecords()가 지운 행 수. */

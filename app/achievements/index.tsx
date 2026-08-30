@@ -17,7 +17,7 @@
  */
 
 import { router, Stack } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import {
@@ -26,22 +26,26 @@ import {
   shortDateLabel,
   type ScoreBar,
 } from '../../components/StatCharts';
+import LedgerDetailSheet, { type LedgerSheetRootMode } from '../../components/LedgerDetailSheet';
 import WordDetailSheet from '../../components/WordDetailSheet';
-import { epochDayToDateString, toEpochDay } from '../../lib/dates';
+import { epochDayToDateString, hourMinute, toEpochDay, todayEpochDay, weekdayLabel } from '../../lib/dates';
 import {
   getMonthHabitBonusTotal,
-  listHabitBonusesForMonth,
-  listUnpaidHabitBonuses,
-  setHabitBonusPaid,
   type HabitBonusRow,
 } from '../../lib/habitQueries';
+import { getMonthIncomeTotal } from '../../lib/incomeQueries';
 import {
-  getIncomeSessionsThisMonth,
-  getMonthIncomeTotal,
-  getUnpaidIncomeSessions,
-  setSessionPaid,
-  type IncomeSessionRow,
-} from '../../lib/incomeQueries';
+  getDailyLedgerSummaries,
+  getLedgerEntriesForDay,
+  getLedgerTotalForRange,
+  getWeeklyLedgerSummaries,
+  setRangePaid,
+  weekIndexOf,
+  weekRangeOf,
+  type DayLedgerSummary,
+  type LedgerEntry,
+  type WeekLedgerSummary,
+} from '../../lib/ledgerQueries';
 import { useSettingsStore } from '../../lib/settings';
 import {
   getMonthlyIncomeTotals,
@@ -59,16 +63,6 @@ import { getWordDetail, type WordDetail } from '../../lib/wordDetail';
 function currentYearMonth(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
-
-/** 로컬 기준 이번 달 [시작 ms, 다음달 시작 ms) 범위 — incomeQueries.currentMonthRangeMs와 동일 로직
- * (그쪽은 비공개 함수라 화면에서 "지급완료는 이번 달만" 필터링을 위해 동일 계산을 이 파일에서도 둔다). */
-function currentMonthRangeMs(): { startMs: number; nextStartMs: number } {
-  const now = new Date();
-  return {
-    startMs: new Date(now.getFullYear(), now.getMonth(), 1).getTime(),
-    nextStartMs: new Date(now.getFullYear(), now.getMonth() + 1, 1).getTime(),
-  };
 }
 
 /** kind → 장부 라벨 매핑 (2026-07-11: 슬롯 통과·장기 스트릭 마일스톤 5종 추가). */
@@ -96,44 +90,40 @@ function habitBonusLabel(kind: HabitBonusRow['kind']): string {
   return HABIT_BONUS_LABELS[kind] ?? kind;
 }
 
-/**
- * 용돈 장부 병합 리스트 1행 — 테스트 수입(test_session)과 습관 보너스(habit_bonus)를
- * 단일 리스트로 보여주기 위한 판별 유니온. 정렬 키는 ms로 통일하되(테스트=takenMs,
- * 보너스=created_ms), 각 행의 표기 방식은 기존 그대로(테스트=날짜·점수, 보너스=
- * local_day 날짜·라벨) 유지한다.
- */
-type LedgerItem =
-  | { kind: 'test'; ms: number; session: IncomeSessionRow }
-  | { kind: 'habit'; ms: number; bonus: HabitBonusRow };
-
-/** 테스트 세션 + 습관 보너스를 ms 내림차순으로 병합한다. */
-function mergeLedgerItems(
-  sessions: IncomeSessionRow[],
-  habitBonuses: HabitBonusRow[],
-): LedgerItem[] {
-  const items: LedgerItem[] = [
-    ...sessions.map((session): LedgerItem => ({ kind: 'test', ms: session.takenMs, session })),
-    ...habitBonuses.map((bonus): LedgerItem => ({ kind: 'habit', ms: bonus.created_ms, bonus })),
-  ];
-  return items.sort((a, b) => b.ms - a.ms);
+/** epoch day → "M/D" 표시 문자열 (세부내역 시트의 날짜별 목록·헤더용). */
+function shortMonthDay(epochDay: number): string {
+  const iso = epochDayToDateString(epochDay); // "YYYY-MM-DD"
+  const [, m, d] = iso.split('-');
+  return `${Number(m)}/${Number(d)}`;
 }
 
-function ledgerItemKey(item: LedgerItem): string {
-  return item.kind === 'test' ? `test-${item.session.sessionId}` : `habit-${item.bonus.id}`;
+/** epoch day → "2026.8.31 월" (오늘 미리보기 목록의 머리글). 0을 채우지 않는다 —
+ * 손으로 쓴 날짜처럼 보이는 쪽이 목록 위 한 줄로 자연스럽다. */
+function fullDateLabel(epochDay: number): string {
+  const [y, m, d] = epochDayToDateString(epochDay).split('-');
+  return `${y}.${Number(m)}.${Number(d)} ${weekdayLabel(epochDay)}`;
 }
 
-// 실기기 QA 피드백(B): 장부 리스트는 화면에 최신 30건까지만 렌더한다. DB 삭제는
-// 절대 하지 않는다 — 월별 Income 차트·합계는 잘리지 않은 전체 데이터에서 계산되므로
-// 이 상수는 오직 렌더링(slice) 단계에서만 쓰인다.
-const LEDGER_DISPLAY_LIMIT = 30;
-
-function formatDateTime(ms: number): string {
-  const d = new Date(ms);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}.${m}.${day}`;
+/** 주 라벨 (스펙 §3.3) — 이번주/지난주는 고정 문구, 그 이전은 "M/D~M/D". */
+function weekLabel(week: WeekLedgerSummary, todayDay: number): string {
+  const thisWeekIndex = weekIndexOf(todayDay);
+  if (week.weekIndex === thisWeekIndex) return '이번주 받은 용돈';
+  if (week.weekIndex === thisWeekIndex - 1) return '지난주 받은 용돈';
+  return `${shortMonthDay(week.startDay)}~${shortMonthDay(week.endDay)}`;
 }
+
+/** "이번주 받은 용돈" 합계 행을 세부내역 시트에 넘기기 위한 임시 WeekLedgerSummary —
+ * entryCount/paidCount는 시트가 참조하지 않으므로(범위 조회만 씀) 0으로 채운다. */
+function thisWeekPseudoSummary(todayDay: number, total: number): WeekLedgerSummary {
+  const weekIndex = weekIndexOf(todayDay);
+  const { startDay, endDay } = weekRangeOf(weekIndex);
+  return { weekIndex, startDay, endDay, total, entryCount: 0, paidCount: 0 };
+}
+
+/** 섹션 맨 위 미리보기에 보여줄 건수. 대상은 **오늘 일어난 일뿐**이다(2026-08-30 사용자
+ * 확정) — 전 기간 최신순이면 며칠 쉬었을 때 지난주 항목이 "최근"이라며 올라와, 오늘 뭘
+ * 했는지 보러 온 화면에서 오늘과 무관한 것만 보이게 된다. */
+const RECENT_PREVIEW_LIMIT = 5;
 
 export default function AchievementsScreen() {
   const [recentScores, setRecentScores] = useState<RecentScore[] | null>(null);
@@ -143,18 +133,22 @@ export default function AchievementsScreen() {
   const [wordStateTrend, setWordStateTrend] = useState<WordStatePoint[] | null>(null);
   const [wordTrendError, setWordTrendError] = useState<string | null>(null);
 
-  // 미지급(전체 기간) ∪ 이번 달(전체 상태) 세션을 sessionId로 병합한 단일 소스.
-  // 지급 토글은 이 배열 안에서 in-place로 반영하고, 화면에 보여줄 "미지급"/
-  // "이번 달 지급완료" 두 그룹은 아래 useMemo로 파생한다(다른 달의 지급완료
-  // 건은 애초에 로드하지 않으므로 파생 결과에도 나타나지 않는다 — 스펙 의도대로).
-  const [incomeSessions, setIncomeSessions] = useState<IncomeSessionRow[] | null>(null);
+  // 용돈 장부 — 집계만 화면 진입 시 로드한다(스펙 §3.6). 개별 항목은 시트를 열 때 조회.
   const [monthTotal, setMonthTotal] = useState(0);
   const [monthlyIncome, setMonthlyIncome] = useState<MonthlyIncomePoint[] | null>(null);
+  const [habitBonusTotal, setHabitBonusTotal] = useState(0);
   const [incomeError, setIncomeError] = useState<string | null>(null);
 
-  const [habitBonuses, setHabitBonuses] = useState<HabitBonusRow[] | null>(null);
-  const [habitBonusTotal, setHabitBonusTotal] = useState(0);
-  const [habitError, setHabitError] = useState<string | null>(null);
+  const [todayLedgerEntries, setTodayLedgerEntries] = useState<LedgerEntry[] | null>(null);
+  const [todayTotal, setTodayTotal] = useState<number | null>(null);
+  const [thisWeekTotal, setThisWeekTotal] = useState<number | null>(null);
+  const [weekSummaries, setWeekSummaries] = useState<WeekLedgerSummary[] | null>(null);
+  /** 전 기간에 기록이 하나라도 있는가 — 빈 화면 문구 판정 전용. 미리보기(오늘)나 주
+   * 목록(이번주 제외)으로 판정하면 "이번주에만 기록이 있는" 사용자가 빈 화면을 본다. */
+  const [hasAnyRecord, setHasAnyRecord] = useState(false);
+  const [ledgerListError, setLedgerListError] = useState<string | null>(null);
+
+  const [showPaidWeeks, setShowPaidWeeks] = useState(false);
 
   // 낯가림 단어 탭 → 단어 상세 바텀시트 (day/[dayId].tsx의 패턴을 그대로 이식).
   const { level } = useSettingsStore();
@@ -182,87 +176,173 @@ export default function AchievementsScreen() {
 
   const loadIncome = useCallback(() => {
     setIncomeError(null);
-    Promise.all([
-      getUnpaidIncomeSessions(),
-      getIncomeSessionsThisMonth(),
-      getMonthIncomeTotal(),
-      getMonthlyIncomeTotals(6),
-    ])
-      .then(([unpaid, month, total, trend]) => {
-        const merged = new Map<number, IncomeSessionRow>();
-        for (const s of unpaid) merged.set(s.sessionId, s);
-        for (const s of month) merged.set(s.sessionId, s);
-        setIncomeSessions(Array.from(merged.values()));
-        setMonthTotal(total);
+    const yearMonth = currentYearMonth();
+    Promise.all([getMonthIncomeTotal(), getMonthHabitBonusTotal(yearMonth), getMonthlyIncomeTotals(6)])
+      .then(([testTotal, bonusTotal, trend]) => {
+        setMonthTotal(testTotal);
+        setHabitBonusTotal(bonusTotal);
         setMonthlyIncome(trend);
       })
       .catch((err: unknown) => setIncomeError(err instanceof Error ? err.message : String(err)));
   }, []);
 
-  const loadHabit = useCallback(() => {
-    setHabitError(null);
-    const yearMonth = currentYearMonth();
-    Promise.all([listUnpaidHabitBonuses(), listHabitBonusesForMonth(yearMonth), getMonthHabitBonusTotal(yearMonth)])
-      .then(([unpaid, month, total]) => {
-        const merged = new Map<number, HabitBonusRow>();
-        for (const b of unpaid) merged.set(b.id, b);
-        for (const b of month) merged.set(b.id, b);
-        setHabitBonuses(Array.from(merged.values()));
-        setHabitBonusTotal(total);
+  // 세부내역 시트가 열려 있는 동안 "그 주(또는 오늘)를 다시 조회하지 않기 위한 캐시" —
+  // 화면을 벗어나면 자연 소멸(영속화하지 않는다, 스펙 §3.6). loadLedgerLists가 오늘치를
+  // 미리 채워 넣으므로 선언이 그보다 위에 있어야 한다.
+  const dayEntriesCache = useRef(new Map<string, LedgerEntry[]>());
+  const daySummariesCache = useRef(new Map<string, DayLedgerSummary[]>());
+
+  const loadLedgerLists = useCallback(() => {
+    setLedgerListError(null);
+    const today = todayEpochDay();
+    const thisWeekIndex = weekIndexOf(today);
+    const { startDay, endDay } = weekRangeOf(thisWeekIndex);
+    Promise.all([
+      getLedgerEntriesForDay(today),
+      getLedgerTotalForRange(today, today),
+      getLedgerTotalForRange(startDay, endDay),
+      getWeeklyLedgerSummaries(),
+    ])
+      .then(([todayEntries, todaySum, weekSum, weeks]) => {
+        // 미리보기에는 5건만 쓰지만(아래 slice) 조회는 오늘 하루치를 통째로 해서 캐시에
+        // 넣는다 — "오늘 받은 용돈" 시트가 열릴 때 다시 조회할 필요가 없다. 하루치는
+        // 기록량이 아니라 하루 활동량에 묶인 상한이라 지연 로드 원칙과 어긋나지 않는다.
+        dayEntriesCache.current.set(`day-${today}`, todayEntries);
+        setTodayLedgerEntries(todayEntries);
+        setTodayTotal(todaySum);
+        setThisWeekTotal(weekSum);
+        // 모든 기록은 어느 주엔가 속하므로 "weeks가 비었다 == 기록이 하나도 없다"이다.
+        setHasAnyRecord(weeks.length > 0);
+        // 이번주는 "미지급 주 목록"에 넣지 않는다(스펙 §3.4 — 아직 정산 대상이 아님).
+        setWeekSummaries(weeks.filter((w) => w.weekIndex !== thisWeekIndex));
       })
-      .catch((err: unknown) => setHabitError(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => setLedgerListError(err instanceof Error ? err.message : String(err)));
   }, []);
 
   useEffect(() => {
     loadStats();
     loadWordTrend();
     loadIncome();
-    loadHabit();
-  }, [loadStats, loadWordTrend, loadIncome, loadHabit]);
+    loadLedgerLists();
+  }, [loadStats, loadWordTrend, loadIncome, loadLedgerLists]);
 
-  const unpaidItems = useMemo<LedgerItem[]>(() => {
-    if (!incomeSessions || !habitBonuses) return [];
-    return mergeLedgerItems(
-      incomeSessions.filter((s) => !s.paid),
-      habitBonuses.filter((b) => !b.paid),
-    );
-  }, [incomeSessions, habitBonuses]);
+  // weekSummaries에는 이번주가 이미 빠져 있다(위 loadLedgerLists) — 여기서 또 거르지 않는다.
+  const unpaidWeeks = useMemo(
+    () => (weekSummaries ?? []).filter((w) => w.paidCount < w.entryCount),
+    [weekSummaries],
+  );
+  const paidWeeks = useMemo(
+    () => (weekSummaries ?? []).filter((w) => w.paidCount >= w.entryCount && w.entryCount > 0),
+    [weekSummaries],
+  );
 
-  const paidItemsThisMonth = useMemo<LedgerItem[]>(() => {
-    if (!incomeSessions || !habitBonuses) return [];
-    const { startMs, nextStartMs } = currentMonthRangeMs();
-    return mergeLedgerItems(
-      incomeSessions.filter((s) => s.paid && s.takenMs >= startMs && s.takenMs < nextStartMs),
-      habitBonuses.filter((b) => b.paid && b.created_ms >= startMs && b.created_ms < nextStartMs),
-    );
-  }, [incomeSessions, habitBonuses]);
-
-  const handleTogglePaid = useCallback(async (row: IncomeSessionRow) => {
-    const next = !row.paid;
-    // 낙관적 갱신 — 체크는 즉시 화면에 반영하고 user.db도 즉시 갱신한다.
-    setIncomeSessions((prev) =>
-      prev ? prev.map((r) => (r.sessionId === row.sessionId ? { ...r, paid: next } : r)) : prev,
-    );
-    try {
-      await setSessionPaid(row.sessionId, next);
-    } catch (err) {
-      // 저장 실패 시 롤백
-      setIncomeSessions((prev) =>
-        prev ? prev.map((r) => (r.sessionId === row.sessionId ? { ...r, paid: row.paid } : r)) : prev,
-      );
-      setIncomeError(err instanceof Error ? err.message : String(err));
+  const invalidateWeekCache = useCallback((startDay: number, endDay: number) => {
+    daySummariesCache.current.delete(`week-${startDay}-${endDay}`);
+    for (let d = startDay; d <= endDay; d++) {
+      dayEntriesCache.current.delete(`day-${d}`);
     }
   }, []);
 
-  const handleToggleHabitPaid = useCallback(async (row: HabitBonusRow) => {
-    const next = !row.paid;
-    setHabitBonuses((prev) => (prev ? prev.map((r) => (r.id === row.id ? { ...r, paid: next } : r)) : prev));
-    try {
-      await setHabitBonusPaid(row.id, next);
-    } catch (err) {
-      setHabitBonuses((prev) => (prev ? prev.map((r) => (r.id === row.id ? { ...r, paid: row.paid } : r)) : prev));
-      setHabitError(err instanceof Error ? err.message : String(err));
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [sheetRootMode, setSheetRootMode] = useState<LedgerSheetRootMode>('days');
+  const [sheetTitle, setSheetTitle] = useState('');
+  const [sheetLoadingLedger, setSheetLoadingLedger] = useState(false);
+  const [sheetLedgerError, setSheetLedgerError] = useState<string | null>(null);
+  const [sheetDaySummaries, setSheetDaySummaries] = useState<DayLedgerSummary[] | null>(null);
+  const [sheetRootEntries, setSheetRootEntries] = useState<LedgerEntry[] | null>(null);
+
+  const openTodaySheet = useCallback(() => {
+    setSheetOpen(true);
+    setSheetRootMode('entries');
+    setSheetTitle('오늘 받은 용돈');
+    setSheetLedgerError(null);
+    setSheetDaySummaries(null);
+    const today = todayEpochDay();
+    const cacheKey = `day-${today}`;
+    const cached = dayEntriesCache.current.get(cacheKey);
+    if (cached) {
+      setSheetRootEntries(cached);
+      setSheetLoadingLedger(false);
+      return;
     }
+    setSheetLoadingLedger(true);
+    setSheetRootEntries(null);
+    getLedgerEntriesForDay(today)
+      .then((entries) => {
+        dayEntriesCache.current.set(cacheKey, entries);
+        setSheetRootEntries(entries);
+      })
+      .catch((err: unknown) => setSheetLedgerError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setSheetLoadingLedger(false));
+  }, []);
+
+  const openWeekSheet = useCallback((week: WeekLedgerSummary, title: string) => {
+    setSheetOpen(true);
+    setSheetRootMode('days');
+    setSheetTitle(title);
+    setSheetLedgerError(null);
+    setSheetRootEntries(null);
+    const cacheKey = `week-${week.startDay}-${week.endDay}`;
+    const cached = daySummariesCache.current.get(cacheKey);
+    if (cached) {
+      setSheetDaySummaries(cached);
+      setSheetLoadingLedger(false);
+      return;
+    }
+    setSheetLoadingLedger(true);
+    setSheetDaySummaries(null);
+    getDailyLedgerSummaries(week.startDay, week.endDay)
+      .then((days) => {
+        daySummariesCache.current.set(cacheKey, days);
+        setSheetDaySummaries(days);
+      })
+      .catch((err: unknown) => setSheetLedgerError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setSheetLoadingLedger(false));
+  }, []);
+
+  const handleRequestDayEntries = useCallback(async (epochDay: number): Promise<LedgerEntry[]> => {
+    const cacheKey = `day-${epochDay}`;
+    const cached = dayEntriesCache.current.get(cacheKey);
+    if (cached) return cached;
+    const entries = await getLedgerEntriesForDay(epochDay);
+    dayEntriesCache.current.set(cacheKey, entries);
+    return entries;
+  }, []);
+
+  const handleCloseLedgerSheet = useCallback(() => {
+    setSheetOpen(false);
+  }, []);
+
+  const handleToggleWeekPaid = useCallback(
+    async (week: WeekLedgerSummary) => {
+      const nextPaid = week.paidCount < week.entryCount; // 지금 미지급이면 지급으로, 아니면 취소
+      // 낙관적 갱신
+      setWeekSummaries((prev) =>
+        prev
+          ? prev.map((w) =>
+              w.weekIndex === week.weekIndex ? { ...w, paidCount: nextPaid ? w.entryCount : 0 } : w,
+            )
+          : prev,
+      );
+      try {
+        await setRangePaid(week.startDay, week.endDay, nextPaid);
+        invalidateWeekCache(week.startDay, week.endDay);
+      } catch (err) {
+        // 롤백
+        setWeekSummaries((prev) =>
+          prev
+            ? prev.map((w) => (w.weekIndex === week.weekIndex ? { ...w, paidCount: week.paidCount } : w))
+            : prev,
+        );
+        setLedgerListError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [invalidateWeekCache],
+  );
+
+  const ledgerLabelFor = useCallback((entry: LedgerEntry): string => {
+    if (entry.source === 'test') return `Day${entry.dayIndex} 테스트`;
+    return habitBonusLabel(entry.kind ?? '');
   }, []);
 
   const handleOpenDetail = useCallback(
@@ -295,13 +375,21 @@ export default function AchievementsScreen() {
         <IncomeSection
           monthlyIncome={monthlyIncome}
           monthTotal={monthTotal + habitBonusTotal}
-          loading={incomeSessions === null || habitBonuses === null}
+          loading={monthlyIncome === null}
           error={incomeError}
-          habitError={habitError}
-          unpaidItems={unpaidItems}
-          paidItemsThisMonth={paidItemsThisMonth}
-          onTogglePaid={handleTogglePaid}
-          onToggleHabitPaid={handleToggleHabitPaid}
+          listError={ledgerListError}
+          todayEntries={todayLedgerEntries}
+          hasAnyRecord={hasAnyRecord}
+          todayTotal={todayTotal}
+          thisWeekTotal={thisWeekTotal}
+          unpaidWeeks={unpaidWeeks}
+          paidWeeks={paidWeeks}
+          showPaidWeeks={showPaidWeeks}
+          onToggleShowPaidWeeks={() => setShowPaidWeeks((v) => !v)}
+          labelFor={ledgerLabelFor}
+          onOpenToday={openTodaySheet}
+          onOpenWeek={openWeekSheet}
+          onToggleWeekPaid={handleToggleWeekPaid}
         />
 
         <ScaryWordsSection words={scaryWords} error={statsError} onWordPress={handleOpenDetail} />
@@ -321,6 +409,20 @@ export default function AchievementsScreen() {
         error={sheetError}
         detail={sheetDetail}
         onClose={handleCloseSheet}
+      />
+
+      <LedgerDetailSheet
+        visible={sheetOpen}
+        rootMode={sheetRootMode}
+        title={sheetTitle}
+        loading={sheetLoadingLedger}
+        error={sheetLedgerError}
+        daySummaries={sheetDaySummaries}
+        rootEntries={sheetRootEntries}
+        onRequestDayEntries={handleRequestDayEntries}
+        labelFor={ledgerLabelFor}
+        formatDay={shortMonthDay}
+        onClose={handleCloseLedgerSheet}
       />
     </View>
   );
@@ -440,61 +542,65 @@ function IncomeTrendMiniChart({ points }: { points: MonthlyIncomePoint[] }) {
   );
 }
 
-/** 용돈 장부 병합 리스트 1행 렌더 — 미지급/지급완료 두 그룹에서 공유한다. */
-function LedgerRow({
-  item,
-  onTogglePaid,
-  onToggleHabitPaid,
-}: {
-  item: LedgerItem;
-  onTogglePaid: (row: IncomeSessionRow) => void;
-  onToggleHabitPaid: (row: HabitBonusRow) => void;
-}) {
-  if (item.kind === 'test') {
-    const session = item.session;
-    return (
-      <View style={styles.row}>
-        <View style={styles.rowLeft}>
-          <Text style={styles.dayLabel}>Day{session.dayIndex}</Text>
-          <Text style={styles.dateText}>{formatDateTime(session.takenMs)}</Text>
-        </View>
-        <View style={styles.rowMid}>
-          <Text style={styles.scoreText}>{session.score100 ?? '-'}점</Text>
-          <Text style={styles.incomeText}>{(session.incomeAmount ?? 0).toLocaleString()}원</Text>
-        </View>
-        <Pressable
-          style={[styles.paidToggle, session.paid && styles.paidToggleOn]}
-          onPress={() => onTogglePaid(session)}
-          hitSlop={8}
-        >
-          <Text style={[styles.paidToggleText, session.paid && styles.paidToggleTextOn]}>
-            {session.paid ? '지급완료' : '미지급'}
-          </Text>
-        </Pressable>
-      </View>
-    );
-  }
-
-  const bonus = item.bonus;
+/** 최근 5건 미리보기 1행 — 읽기 전용(지급 버튼 없음). */
+function RecentEntryRow({ entry, labelFor }: { entry: LedgerEntry; labelFor: (entry: LedgerEntry) => string }) {
   return (
     <View style={styles.row}>
       <View style={styles.rowLeft}>
-        <Text style={styles.dayLabel}>{habitBonusLabel(bonus.kind)}</Text>
-        <Text style={styles.dateText}>{epochDayToDateString(bonus.local_day)}</Text>
+        <Text style={styles.dayLabel}>
+          {labelFor(entry)}
+          <Text style={styles.rowMeta}>{`  ${hourMinute(entry.ms)}`}</Text>
+        </Text>
+        {entry.source === 'test' && entry.score100 !== null && (
+          <Text style={styles.dateText}>{entry.score100}점</Text>
+        )}
+      </View>
+      <Text style={styles.incomeText}>{entry.amount.toLocaleString()}원</Text>
+    </View>
+  );
+}
+
+/** "오늘"/"이번주" 합계 행 — 탭하면 세부내역 시트가 열린다. 지급 버튼 없음(스펙 §3.1). */
+function TotalRow({ label, total, onPress }: { label: string; total: number; onPress: () => void }) {
+  return (
+    <Pressable style={styles.totalRow} onPress={onPress} hitSlop={4}>
+      <Text style={styles.totalRowLabel}>{label}</Text>
+      <Text style={styles.totalRowAmount}>{total.toLocaleString()}원</Text>
+    </Pressable>
+  );
+}
+
+/** 미지급/지급완료 주 목록 1행 — 라벨·금액·주 일괄 지급 토글, 행 탭 시 세부내역 시트. */
+function WeekRow({
+  week,
+  label,
+  onPress,
+  onTogglePaid,
+}: {
+  week: WeekLedgerSummary;
+  label: string;
+  onPress: () => void;
+  onTogglePaid: () => void;
+}) {
+  const isPaid = week.paidCount >= week.entryCount && week.entryCount > 0;
+  return (
+    <Pressable style={styles.row} onPress={onPress} hitSlop={4}>
+      <View style={styles.rowLeft}>
+        <Text style={styles.dayLabel}>{label}</Text>
       </View>
       <View style={styles.rowMid}>
-        <Text style={styles.incomeText}>{bonus.amount.toLocaleString()}원</Text>
+        <Text style={styles.incomeText}>{week.total.toLocaleString()}원</Text>
       </View>
       <Pressable
-        style={[styles.paidToggle, bonus.paid && styles.paidToggleOn]}
-        onPress={() => onToggleHabitPaid(bonus)}
+        style={[styles.paidToggle, isPaid && styles.paidToggleOn]}
+        onPress={onTogglePaid}
         hitSlop={8}
       >
-        <Text style={[styles.paidToggleText, bonus.paid && styles.paidToggleTextOn]}>
-          {bonus.paid ? '지급완료' : '미지급'}
+        <Text style={[styles.paidToggleText, isPaid && styles.paidToggleTextOn]}>
+          {isPaid ? '지급완료' : '미지급'}
         </Text>
       </Pressable>
-    </View>
+    </Pressable>
   );
 }
 
@@ -503,33 +609,46 @@ function IncomeSection({
   monthTotal,
   loading,
   error,
-  habitError,
-  unpaidItems,
-  paidItemsThisMonth,
-  onTogglePaid,
-  onToggleHabitPaid,
+  listError,
+  todayEntries,
+  hasAnyRecord,
+  todayTotal,
+  thisWeekTotal,
+  unpaidWeeks,
+  paidWeeks,
+  showPaidWeeks,
+  onToggleShowPaidWeeks,
+  labelFor,
+  onOpenToday,
+  onOpenWeek,
+  onToggleWeekPaid,
 }: {
   monthlyIncome: MonthlyIncomePoint[] | null;
   monthTotal: number;
   loading: boolean;
   error: string | null;
-  habitError: string | null;
-  unpaidItems: LedgerItem[];
-  paidItemsThisMonth: LedgerItem[];
-  onTogglePaid: (row: IncomeSessionRow) => void;
-  onToggleHabitPaid: (row: HabitBonusRow) => void;
+  listError: string | null;
+  todayEntries: LedgerEntry[] | null;
+  hasAnyRecord: boolean;
+  todayTotal: number | null;
+  thisWeekTotal: number | null;
+  unpaidWeeks: WeekLedgerSummary[];
+  paidWeeks: WeekLedgerSummary[];
+  showPaidWeeks: boolean;
+  onToggleShowPaidWeeks: () => void;
+  labelFor: (entry: LedgerEntry) => string;
+  onOpenToday: () => void;
+  onOpenWeek: (week: WeekLedgerSummary, title: string) => void;
+  onToggleWeekPaid: (week: WeekLedgerSummary) => void;
 }) {
-  const [showPaid, setShowPaid] = useState(false);
-  const hasAnyError = Boolean(error) || Boolean(habitError);
-  const isEmpty = !loading && !hasAnyError && unpaidItems.length === 0 && paidItemsThisMonth.length === 0;
+  const hasAnyError = Boolean(error) || Boolean(listError);
+  const listLoading = todayEntries === null;
+  // 빈 화면 판정은 hasAnyRecord 하나로 한다 — 미리보기가 "오늘"로 좁혀진 뒤로는 목록
+  // 길이로 판정할 수 없다(어제까지 열심히 한 아이가 오늘 아침에 열면 셋 다 0이 된다).
+  const isEmpty = !loading && !listLoading && !hasAnyError && !hasAnyRecord;
 
-  // 실기기 QA 피드백(B): 화면 렌더는 최신 30건까지만 자르고, 잘린 건수만 안내 문구로
-  // 표시한다. DB 조회 결과(unpaidItems/paidItemsThisMonth) 자체는 그대로 두므로 월별
-  // Income 차트·합계 계산에는 영향이 없다.
-  const unpaidVisible = unpaidItems.slice(0, LEDGER_DISPLAY_LIMIT);
-  const unpaidHiddenCount = unpaidItems.length - unpaidVisible.length;
-  const paidVisible = paidItemsThisMonth.slice(0, LEDGER_DISPLAY_LIMIT);
-  const paidHiddenCount = paidItemsThisMonth.length - paidVisible.length;
+  const today = todayEpochDay();
+  const previewEntries = (todayEntries ?? []).slice(0, RECENT_PREVIEW_LIMIT);
 
   return (
     <View style={styles.section}>
@@ -541,61 +660,81 @@ function IncomeSection({
       </View>
 
       {error && <Text style={styles.error}>{error}</Text>}
-      {habitError && <Text style={styles.error}>{habitError}</Text>}
+      {listError && <Text style={styles.error}>{listError}</Text>}
 
-      {loading && !hasAnyError && <ActivityIndicator style={styles.loading} />}
+      {(loading || listLoading) && !hasAnyError && <ActivityIndicator style={styles.loading} />}
 
       {isEmpty && (
         <View style={styles.empty}>
-          <Text style={styles.emptyText}>테스트 기록이 없어요.</Text>
-          <Text style={styles.emptySubText}>테스트를 완료하면 여기에 Income이 쌓여요.</Text>
+          <Text style={styles.emptyText}>단어장을 공부하면 용돈이 쌓여요.</Text>
+          <View style={styles.emptyList}>
+            <Text style={styles.emptyListItem}>1. 일정시간 이상 오늘의 단어장 암기</Text>
+            <Text style={styles.emptyListItem}>2. 복습할 단어장을 보며 외운 단어 다시 떠올리기</Text>
+            <Text style={styles.emptyListItem}>3. 테스트 보기</Text>
+            <Text style={styles.emptyListItem}>4. 전구 4개를 다 켜보기</Text>
+            <Text style={styles.emptyListItem}>5. 매일매일 지속하면 더 큰 상금이!</Text>
+          </View>
         </View>
       )}
 
-      {!loading && !hasAnyError && !isEmpty && (
+      {!loading && !listLoading && !hasAnyError && !isEmpty && (
         <>
-          {unpaidVisible.length > 0 ? (
-            <View style={styles.listContent}>
-              {unpaidVisible.map((item) => (
-                <LedgerRow
-                  key={ledgerItemKey(item)}
-                  item={item}
-                  onTogglePaid={onTogglePaid}
-                  onToggleHabitPaid={onToggleHabitPaid}
-                />
-              ))}
-              {unpaidHiddenCount > 0 && (
-                <Text style={styles.hiddenCountText}>오래된 항목 {unpaidHiddenCount}건은 표시하지 않아요</Text>
-              )}
-            </View>
-          ) : (
-            <Text style={styles.emptyText}>미지급 내역이 없어요.</Text>
+          {previewEntries.length > 0 && (
+            <>
+              <Text style={styles.previewDate}>{fullDateLabel(today)}</Text>
+              <View style={styles.listContent}>
+                {previewEntries.map((entry) => (
+                  <RecentEntryRow key={entry.key} entry={entry} labelFor={labelFor} />
+                ))}
+              </View>
+            </>
           )}
 
-          <Pressable style={styles.paidToggleSection} onPress={() => setShowPaid((v) => !v)} hitSlop={8}>
+          <View style={styles.totalRowGroup}>
+            <TotalRow label="오늘 받은 용돈" total={todayTotal ?? 0} onPress={onOpenToday} />
+            <TotalRow
+              label="이번주 받은 용돈"
+              total={thisWeekTotal ?? 0}
+              onPress={() => onOpenWeek(thisWeekPseudoSummary(today, thisWeekTotal ?? 0), '이번주 받은 용돈')}
+            />
+          </View>
+
+          <View style={[styles.listContent, styles.weekList]}>
+            {unpaidWeeks.length === 0 ? (
+              <Text style={styles.emptyText}>미지급 내역이 없어요.</Text>
+            ) : (
+              unpaidWeeks.map((week) => (
+                <WeekRow
+                  key={week.weekIndex}
+                  week={week}
+                  label={weekLabel(week, today)}
+                  onPress={() => onOpenWeek(week, weekLabel(week, today))}
+                  onTogglePaid={() => onToggleWeekPaid(week)}
+                />
+              ))
+            )}
+          </View>
+
+          <Pressable style={styles.paidToggleSection} onPress={onToggleShowPaidWeeks} hitSlop={8}>
             <Text style={styles.paidToggleSectionText}>
-              {showPaid ? '지급 완료 접기 ▲' : `지급 완료 ${paidItemsThisMonth.length}건 보기 ▼`}
+              {showPaidWeeks ? '지급 완료 접기 ▲' : `지급 완료 ${paidWeeks.length}건 보기 ▼`}
             </Text>
           </Pressable>
 
-          {showPaid && (
+          {showPaidWeeks && (
             <View style={styles.listContent}>
-              {paidVisible.length === 0 ? (
-                <Text style={styles.emptyText}>이번 달 지급 완료 내역이 없어요.</Text>
+              {paidWeeks.length === 0 ? (
+                <Text style={styles.emptyText}>지급 완료 내역이 없어요.</Text>
               ) : (
-                <>
-                  {paidVisible.map((item) => (
-                    <LedgerRow
-                      key={ledgerItemKey(item)}
-                      item={item}
-                      onTogglePaid={onTogglePaid}
-                      onToggleHabitPaid={onToggleHabitPaid}
-                    />
-                  ))}
-                  {paidHiddenCount > 0 && (
-                    <Text style={styles.hiddenCountText}>오래된 항목 {paidHiddenCount}건은 표시하지 않아요</Text>
-                  )}
-                </>
+                paidWeeks.map((week) => (
+                  <WeekRow
+                    key={week.weekIndex}
+                    week={week}
+                    label={weekLabel(week, today)}
+                    onPress={() => onOpenWeek(week, weekLabel(week, today))}
+                    onTogglePaid={() => onToggleWeekPaid(week)}
+                  />
+                ))
               )}
             </View>
           )}
@@ -605,7 +744,12 @@ function IncomeSection({
       {/* 실기기 QA 피드백(A): 월별 Income 미니 차트는 지급/미지급 리스트 아래(섹션 하단)로 이동.
           요약 합계(summaryCard)는 기존 위치(섹션 상단) 유지. */}
       {!monthlyIncome && <ActivityIndicator style={styles.loading} />}
-      {monthlyIncome && <IncomeTrendMiniChart points={monthlyIncome} />}
+      {monthlyIncome && (
+        <View style={styles.chartBlock}>
+          <Text style={styles.chartTitle}>매달 단어를 외워 이만큼 받았어요</Text>
+          <IncomeTrendMiniChart points={monthlyIncome} />
+        </View>
+      )}
     </View>
   );
 }
@@ -712,14 +856,61 @@ const styles = StyleSheet.create({
     color: '#999',
     textAlign: 'center',
   },
+  emptyList: {
+    marginTop: 8,
+    alignSelf: 'stretch',
+    gap: 4,
+  },
+  emptyListItem: {
+    fontSize: 13,
+    color: '#999',
+    textAlign: 'left',
+  },
+  previewDate: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#888',
+    marginBottom: 10,
+  },
   listContent: {
     gap: 12,
   },
-  hiddenCountText: {
-    fontSize: 11,
-    color: '#aaa',
-    textAlign: 'center',
-    marginTop: 4,
+  // 블록 사이 여백 — 최근 미리보기 / 오늘·이번주 / 주별 목록은 성격이 다른 세 덩어리라
+  // 붙어 있으면 한 목록으로 읽힌다(2026-08-30 실기기 피드백).
+  totalRowGroup: {
+    marginTop: 22,
+    gap: 8,
+  },
+  weekList: {
+    marginTop: 22,
+  },
+  chartBlock: {
+    marginTop: 24,
+  },
+  chartTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#555',
+    marginBottom: 10,
+  },
+  totalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#fff1e6',
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+  },
+  totalRowLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#b45309',
+  },
+  totalRowAmount: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#b45309',
   },
   paidToggleSection: {
     marginTop: 16,
@@ -751,13 +942,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#999',
   },
+  // 미션명 옆 부가정보(시각). 미리보기는 오늘분만 보여주므로 날짜는 빼고 시각만 남겼다 —
+  // 모든 행이 같은 날짜라 "8/30"이 다섯 번 반복될 뿐이었다(2026-08-30).
+  rowMeta: {
+    fontSize: 12,
+    fontWeight: '400',
+    color: '#aaa',
+  },
   rowMid: {
     alignItems: 'flex-end',
     marginRight: 12,
-  },
-  scoreText: {
-    fontSize: 14,
-    color: '#666',
   },
   incomeText: {
     marginTop: 4,

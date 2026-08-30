@@ -128,7 +128,7 @@ export async function updateIncomeRuleAmount(ruleId: number, amount: number): Pr
   await userDb.runAsync('UPDATE income_rule SET amount = ? WHERE id = ?', [amount, ruleId]);
 }
 
-/** 월별 Income 목록 1행 (Q-RECENT5 확장 — 장부 화면은 전체 월 목록이 필요). */
+/** Income 목록 1행 (getUnpaidIncomeSessions 반환 행 — 미지급 건 조회용). */
 export interface IncomeSessionRow {
   sessionId: number;
   takenMs: number;
@@ -137,42 +137,6 @@ export interface IncomeSessionRow {
   score100: number | null;
   incomeAmount: number | null;
   paid: boolean;
-}
-
-/**
- * 이번 달(로컬 기준) test_session 목록을 최신순으로 반환한다 (장부 화면 월별 목록).
- * Q-INCOME-MONTH의 월 경계 계산과 동일하게 JS에서 이번 달 시작/다음달 시작 ms를 구해
- * taken_ms 범위로 좁힌다.
- */
-export async function getIncomeSessionsThisMonth(): Promise<IncomeSessionRow[]> {
-  const userDb = getUserDb();
-  const { startMs, nextStartMs } = currentMonthRangeMs();
-
-  const rows = await userDb.getAllAsync<{
-    id: number;
-    taken_ms: number;
-    day_id: number;
-    day_index: number;
-    score100: number | null;
-    income_amount: number | null;
-    paid: number;
-  }>(
-    `SELECT ts.id, ts.taken_ms, ts.day_id, d.day_index, ts.score100, ts.income_amount, ts.paid
-     FROM test_session ts JOIN day d ON d.id = ts.day_id
-     WHERE ts.taken_ms >= ? AND ts.taken_ms < ?
-     ORDER BY ts.taken_ms DESC`,
-    [startMs, nextStartMs],
-  );
-
-  return rows.map((r) => ({
-    sessionId: r.id,
-    takenMs: r.taken_ms,
-    dayId: r.day_id,
-    dayIndex: r.day_index,
-    score100: r.score100,
-    incomeAmount: r.income_amount,
-    paid: r.paid === 1,
-  }));
 }
 
 /**
@@ -221,15 +185,6 @@ export async function getMonthIncomeTotal(): Promise<number> {
     [startMs, nextStartMs],
   );
   return row?.month_income ?? 0;
-}
-
-/**
- * 지급 여부 토글 (부모가 준 돈 체크 — 결제 연동 없음, 장부 체크만).
- * user.db에 즉시 반영한다.
- */
-export async function setSessionPaid(sessionId: number, paid: boolean): Promise<void> {
-  const userDb = getUserDb();
-  await userDb.runAsync('UPDATE test_session SET paid = ? WHERE id = ?', [paid ? 1 : 0, sessionId]);
 }
 
 /** 로컬 기준 이번 달 시작 ms / 다음 달 시작 ms. */
