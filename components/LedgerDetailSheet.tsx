@@ -45,7 +45,7 @@ interface LedgerDetailSheetProps {
   visible: boolean;
   /** 시트를 처음 열 때의 표시 모드 (닫힌 뒤 재사용 시 이 값으로 스택이 초기화됨). */
   rootMode: LedgerSheetRootMode;
-  /** 헤더 타이틀 (예: "이번주 받은 용돈", "8/11~8/17", "오늘 받은 용돈"). */
+  /** 헤더 타이틀 (예: "이번주 번 용돈", "8/11~8/17", "오늘 번 용돈"). */
   title: string;
   loading: boolean;
   error: string | null;

@@ -1,5 +1,5 @@
 /**
- * 설정 화면 — 난이도(고1/고2/고3) 선택 (설계.md §4.4 Q-SETTINGS).
+ * 설정 화면 — 예문 난이도(고1/고2/고3) 선택 (설계.md §4.4 Q-SETTINGS).
  *
  * 설계.md §4.2 화면 트리는 Drawer 하위 `settings.tsx`를 가정하지만, 현재 앱은
  * Drawer 미도입 상태로 app/day, app/review, app/test가 전부 평평한 스택 라우트다.
@@ -131,8 +131,8 @@ export default function SettingsScreen() {
 
       <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
         <View>
-          <Text style={styles.sectionTitle}>난이도</Text>
-          <Text style={styles.sectionDesc}>단어장 예문의 난이도를 선택하세요. 뜻은 난이도와 무관하게 항상 전부 표시됩니다.</Text>
+          <Text style={styles.sectionTitle}>예문 난이도</Text>
+          <Text style={styles.sectionDesc}>어휘는 중1 수준부터 가능하지만 예문은 고 1,2,3 수준의 수능 스타일입니다.</Text>
 
           <View style={styles.options}>
             {LEVEL_OPTIONS.map((opt) => {
@@ -1063,20 +1063,24 @@ const HABIT_BONUS_ROWS: { kind: HabitBonusKind; label: string }[] = [
   // 2026-08-25: slotPass의 라벨을 "미션 1개 통과" → "오늘 단어장 통과"로. 지급 시점이
   // 슬롯 완성에서 오늘 단어장 조각 기록으로 옮겨졌다(즉시 보상). 필드명은 옛 이름 유지 —
   // app_meta 키(habit_bonus_slot_pass_amount)에 사용자 편집값이 들어 있어 바꾸면 초기화된다.
-  { kind: 'slotPass', label: '오늘 단어장 통과' },
+  // 2026-08-30: 라벨을 용돈 장부(app/achievements/index.tsx HABIT_BONUS_LABELS)와
+  // 글자까지 맞췄다. 부모가 여기서 금액을 정하고 장부에서 그 항목을 확인하는데, 두 화면이
+  // 다른 이름으로 부르면 같은 항목인 줄 모른다. 한쪽만 고치지 말 것.
+  { kind: 'slotPass', label: '오늘 단어장 학습' },
   { kind: 'reviewDay', label: '복습 1개 통과' },
-  { kind: 'fullDay', label: '하루 4회 완주' },
-  { kind: 'streak7', label: '7일 연속' },
-  { kind: 'streak14', label: '14일 연속' },
-  { kind: 'streak30', label: '30일 연속' },
-  { kind: 'streak60', label: '60일 연속' },
-  { kind: 'streak100', label: '100일 연속' },
+  { kind: 'fullDay', label: '💡전구 4개 스트라이크' },
+  { kind: 'streak7', label: '🔥7일 연속 스트라이크' },
+  { kind: 'streak14', label: '🔥14일 연속 스트라이크' },
+  { kind: 'streak30', label: '🔥30일 연속 스트라이크' },
+  { kind: 'streak60', label: '🔥60일 연속 스트라이크' },
+  { kind: 'streak100', label: '🔥100일 연속 스트라이크' },
 ];
 
 const HABIT_BONUS_KINDS = HABIT_BONUS_ROWS.map((row) => row.kind);
 
 /**
- * 습관 보너스 금액(하루 4회 완주 / 7일 연속 / 미션 통과 / 14·30·60·100일 연속) 편집 섹션.
+ * 습관 보너스 금액(오늘 단어장 학습 / 복습 1개 / 전구 4개 스트라이크 / 7·14·30·60·100일
+ * 연속 스트라이크) 편집 섹션.
  * IncomeRulesSection과 동일한 TextInput(number-pad)+onBlur 즉시저장 패턴이나,
  * 대상이 income_rule처럼 DB 목록이 아니라 고정 7행(app_meta 키 7개)이라 drafts를
  * kind로 키잉한다.

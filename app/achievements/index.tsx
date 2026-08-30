@@ -65,14 +65,20 @@ function currentYearMonth(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
-/** kind → 장부 라벨 매핑 (2026-07-11: 슬롯 통과·장기 스트릭 마일스톤 5종 추가). */
+/** kind → 장부 라벨 매핑 (2026-07-11: 슬롯 통과·장기 스트릭 마일스톤 5종 추가).
+ *
+ * 2026-08-30 개명: "하루 4회 완주"→"전구 4개 스트라이크", "N일 연속 보너스"→"🔥N일 연속
+ * 스트라이크", "오늘 단어장 통과"→"오늘 단어장 학습"(아래 함수). **설정 화면의 금액 편집
+ * 행(app/settings/index.tsx HABIT_BONUS_ROWS)도 같은 이름을 쓴다** — 한 기능을 두 이름으로
+ * 부르면 같은 기능인 줄 모른다(테스트 타임 개명 때 배운 것). 한쪽만 고치지 말 것.
+ * kind 문자열과 app_meta 키는 그대로다 — 바꾸면 과거 기록과 사용자 편집 금액이 끊긴다. */
 const HABIT_BONUS_LABELS: Record<string, string> = {
-  full_day: '하루 4회 완주',
-  streak7: '7일 연속 보너스',
-  streak14: '14일 연속 보너스',
-  streak30: '30일 연속 보너스',
-  streak60: '60일 연속 보너스',
-  streak100: '100일 연속 보너스',
+  full_day: '💡전구 4개 스트라이크',
+  streak7: '🔥7일 연속 스트라이크',
+  streak14: '🔥14일 연속 스트라이크',
+  streak30: '🔥30일 연속 스트라이크',
+  streak60: '🔥60일 연속 스트라이크',
+  streak100: '🔥100일 연속 스트라이크',
 };
 
 /** review_day_{dayId}_s{slotIndex} 형식에서 dayId만 추출한다. 정보 부가 없는 슬롯
@@ -83,7 +89,7 @@ function habitBonusLabel(kind: HabitBonusRow['kind']): string {
   // slot_pass_*는 2026-08-25부터 "오늘 단어장 조각 통과" 시점에 즉시 지급된다(그 전에는
   // 슬롯 완성 시점). kind 문자열은 그대로 둬서 과거 행도 같은 라벨로 읽힌다 — 복습 편입
   // 전에는 "슬롯 통과 == 오늘 단어장 통과"였으므로 지난 기록에도 이 라벨이 맞다.
-  if (kind.startsWith('slot_pass_')) return '오늘 단어장 통과';
+  if (kind.startsWith('slot_pass_')) return '오늘 단어장 학습';
   const reviewMatch = kind.match(REVIEW_DAY_KIND_RE);
   if (reviewMatch) return `Day${reviewMatch[1]} 복습`;
   if (kind.startsWith('review_day_')) return '복습 보너스';
@@ -107,12 +113,12 @@ function fullDateLabel(epochDay: number): string {
 /** 주 라벨 (스펙 §3.3) — 이번주/지난주는 고정 문구, 그 이전은 "M/D~M/D". */
 function weekLabel(week: WeekLedgerSummary, todayDay: number): string {
   const thisWeekIndex = weekIndexOf(todayDay);
-  if (week.weekIndex === thisWeekIndex) return '이번주 받은 용돈';
-  if (week.weekIndex === thisWeekIndex - 1) return '지난주 받은 용돈';
+  if (week.weekIndex === thisWeekIndex) return '이번주 번 용돈';
+  if (week.weekIndex === thisWeekIndex - 1) return '지난주 번 용돈';
   return `${shortMonthDay(week.startDay)}~${shortMonthDay(week.endDay)}`;
 }
 
-/** "이번주 받은 용돈" 합계 행을 세부내역 시트에 넘기기 위한 임시 WeekLedgerSummary —
+/** "이번주 번 용돈" 합계 행을 세부내역 시트에 넘기기 위한 임시 WeekLedgerSummary —
  * entryCount/paidCount는 시트가 참조하지 않으므로(범위 조회만 씀) 0으로 채운다. */
 function thisWeekPseudoSummary(todayDay: number, total: number): WeekLedgerSummary {
   const weekIndex = weekIndexOf(todayDay);
@@ -205,7 +211,7 @@ export default function AchievementsScreen() {
     ])
       .then(([todayEntries, todaySum, weekSum, weeks]) => {
         // 미리보기에는 5건만 쓰지만(아래 slice) 조회는 오늘 하루치를 통째로 해서 캐시에
-        // 넣는다 — "오늘 받은 용돈" 시트가 열릴 때 다시 조회할 필요가 없다. 하루치는
+        // 넣는다 — "오늘 번 용돈" 시트가 열릴 때 다시 조회할 필요가 없다. 하루치는
         // 기록량이 아니라 하루 활동량에 묶인 상한이라 지연 로드 원칙과 어긋나지 않는다.
         dayEntriesCache.current.set(`day-${today}`, todayEntries);
         setTodayLedgerEntries(todayEntries);
@@ -254,7 +260,7 @@ export default function AchievementsScreen() {
   const openTodaySheet = useCallback(() => {
     setSheetOpen(true);
     setSheetRootMode('entries');
-    setSheetTitle('오늘 받은 용돈');
+    setSheetTitle('오늘 번 용돈');
     setSheetLedgerError(null);
     setSheetDaySummaries(null);
     const today = todayEpochDay();
@@ -340,8 +346,10 @@ export default function AchievementsScreen() {
     [invalidateWeekCache],
   );
 
+  // 미션명 앞 이모지는 종류를 한눈에 가르는 표식이다 — 🏄🏽 테스트 / 💡전구 4개 /
+  // 🔥연속. 습관 보너스 쪽은 habitBonusLabel(위 HABIT_BONUS_LABELS)이 이미 붙여서 준다.
   const ledgerLabelFor = useCallback((entry: LedgerEntry): string => {
-    if (entry.source === 'test') return `Day${entry.dayIndex} 테스트`;
+    if (entry.source === 'test') return `🏄🏽Day${entry.dayIndex} 테스트`;
     return habitBonusLabel(entry.kind ?? '');
   }, []);
 
@@ -691,11 +699,11 @@ function IncomeSection({
           )}
 
           <View style={styles.totalRowGroup}>
-            <TotalRow label="오늘 받은 용돈" total={todayTotal ?? 0} onPress={onOpenToday} />
+            <TotalRow label="오늘 번 용돈" total={todayTotal ?? 0} onPress={onOpenToday} />
             <TotalRow
-              label="이번주 받은 용돈"
+              label="이번주 번 용돈"
               total={thisWeekTotal ?? 0}
-              onPress={() => onOpenWeek(thisWeekPseudoSummary(today, thisWeekTotal ?? 0), '이번주 받은 용돈')}
+              onPress={() => onOpenWeek(thisWeekPseudoSummary(today, thisWeekTotal ?? 0), '이번주 번 용돈')}
             />
           </View>
 
@@ -746,7 +754,7 @@ function IncomeSection({
       {!monthlyIncome && <ActivityIndicator style={styles.loading} />}
       {monthlyIncome && (
         <View style={styles.chartBlock}>
-          <Text style={styles.chartTitle}>매달 단어를 외워 이만큼 받았어요</Text>
+          <Text style={styles.chartTitle}>매달 단어를 외워 이만큼 벌었어요</Text>
           <IncomeTrendMiniChart points={monthlyIncome} />
         </View>
       )}
